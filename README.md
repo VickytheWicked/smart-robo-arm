@@ -14,7 +14,7 @@ The long-term goal is to develop a robotic arm capable of **detecting, tracking,
 
 The Raspberry Pi hosts a web server that provides a browser-based control and monitoring interface.
 
-![Robotic Arm Dashboard](dashboard.png)
+![Robotic Arm Dashboard](/images/dashboard.png)
 
 The dashboard provides:
 
@@ -27,10 +27,6 @@ The dashboard provides:
 * 📜 System and exploration logs
 * ⚙️ Scripted arm movements
 * 🔌 ESP32 communication status
-
-## Screenshot
-![Dashboard](/images/dashboard.png)
-
 ---
 
 ## 🏗️ System Architecture
