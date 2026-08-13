@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RoboArm — Control Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+:root {
+  --bg:      #0b0d12;
+  --s1:      #13161f;
+  --s2:      #1b1f2c;
+  --s3:      #232840;
+  --border:  rgba(255,255,255,0.07);
+  --accent:  #00e5a0;
+  --blue:    #38b6ff;
+  --amber:   #ffb020;
+  --red:     #ff4d4d;
+  --muted:   #5a6280;
+  --text:    #dde2f0;
+  --font:    'JetBrains Mono', 'Courier New', monospace;
+  --r:       8px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 12px; overflow-x: hidden; }
+
+/* ── Topbar ── */
+#topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 20px;
+  background: var(--s1);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 99;
+}
+.logo { font-size: 14px; font-weight: 700; letter-spacing: 3px; color: var(--accent); }
+.pills { display: flex; gap: 10px; }
+.pill {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 20px;
+  background: var(--s2); border: 1px solid var(--border);
+  font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--muted);
+}
+.dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--muted);
+}
+.dot.on  { background: var(--accent); box-shadow: 0 0 6px var(--accent); animation: blink 2s infinite; }
+.dot.off { background: var(--red); }
+.dot.amber { background: var(--amber); }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.35} }
+#clock { color: var(--muted); font-size: 11px; }
+
+/* ── Layout ── */
+#grid {
+  display: grid;
+  grid-template-columns: 270px 1fr 260px;
+  grid-template-rows: auto auto;
+  gap: 10px;
+  padding: 12px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* ── Panel ── */
+.panel {
+  background: var(--s1);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 12px 14px;
+}
+.ptitle {
+  font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 10px;
+  padding-bottom: 7px; border-bottom: 1px solid var(--border);
+}
+
+/* ── Joint sliders ── */
+.jrow { margin-bottom: 11px; }
+.jhead { display: flex; justify-content: space-between; margin-bottom: 3px; }
+.jname { font-size: 10px; color: var(--accent); font-weight: 700; }
+.jval  { font-size: 10px; color: var(--text); }
+.jlimits { font-size: 9px; color: var(--muted); margin-bottom: 3px; }
+input[type=range] {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 3px;
+  background: var(--s3); border-radius: 2px; outline: none; cursor: pointer;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 12px; height: 12px;
+  border-radius: 50%; background: var(--accent);
+  border: 2px solid var(--bg); cursor: pointer;
+  transition: transform .1s;
+}
+input[type=range]:hover::-webkit-slider-thumb { transform: scale(1.25); }
+
+/* ── Arm SVG viz ── */
+#armPanel { grid-column: 2; grid-row: 1 / 3; }
+#armWrap {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg); border-radius: 6px;
+  border: 1px solid var(--border);
+  padding: 10px; margin-bottom: 10px;
+  height: 340px;
+}
+#armSvg { width: 100%; height: 100%; }
+
+/* ── Camera & sensors ── */
+#camPanel { grid-column: 3; grid-row: 1 / 3; }
+.cam-box {
+  background: #000; border-radius: 6px; border: 1px solid var(--border);
+  aspect-ratio: 4/3; position: relative; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 8px;
+}
+.cam-box img { width: 100%; object-fit: cover; }
+.cam-placeholder { color: var(--muted); font-size: 10px; text-align: center; }
+.cam-badge {
+  position: absolute; top: 6px; left: 6px;
+  font-size: 9px; padding: 2px 7px; border-radius: 4px;
+  background: rgba(0,0,0,.65); color: var(--accent); letter-spacing: 1px;
+}
+.crosshair {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%,-50%); pointer-events: none;
+}
+
+/* ── Metric grid ── */
+.mgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 10px; }
+.mcard {
+  background: var(--s2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 10px;
+}
+.mlabel { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 2px; }
+.mval   { font-size: 19px; font-weight: 700; line-height: 1; }
+.munit  { font-size: 9px; color: var(--muted); margin-top: 2px; }
+.green  { color: var(--accent); }
+.blue   { color: var(--blue); }
+.amber  { color: var(--amber); }
+.redv   { color: var(--red); }
+
+/* ── Detect badge ── */
+.dbadge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 10px; padding: 3px 9px; border-radius: 4px;
+  margin-bottom: 10px;
+}
+.dbadge.found    { background: rgba(0,229,160,.12); color: var(--accent);  border: 1px solid rgba(0,229,160,.25); }
+.dbadge.notfound { background: rgba(255,77,77,.10);  color: var(--red);    border: 1px solid rgba(255,77,77,.2); }
+
+/* ── Buttons ── */
+.btn {
+  display: block; width: 100%; padding: 8px;
+  background: var(--s2); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--muted);
+  font-family: var(--font); font-size: 10px;
+  letter-spacing: 1px; text-transform: uppercase;
+  cursor: pointer; transition: all .15s; margin-bottom: 6px; text-align: left;
+}
+.btn:hover { border-color: var(--blue); color: var(--text); }
+.btn.active { background: rgba(0,229,160,.1); border-color: var(--accent); color: var(--accent); }
+.btn.danger:hover { border-color: var(--red); color: var(--red); }
+
+.send-btn {
+  display: block; width: 100%; margin-top: 10px;
+  padding: 9px; background: var(--accent); color: #000;
+  border: none; border-radius: 6px; font-family: var(--font);
+  font-size: 11px; font-weight: 700; letter-spacing: 2px;
+  text-transform: uppercase; cursor: pointer;
+  transition: opacity .15s, transform .1s;
+}
+.send-btn:hover  { opacity: .85; }
+.send-btn:active { transform: scale(.97); }
+
+/* ── Sequences ── */
+.seqgrid { display: flex; flex-wrap: wrap; gap: 5px; }
+.sbtn {
+  padding: 4px 11px; background: var(--s2); border: 1px solid var(--border);
+  border-radius: 20px; color: var(--muted); font-family: var(--font);
+  font-size: 9px; letter-spacing: 1px; text-transform: uppercase;
+  cursor: pointer; transition: all .15s;
+}
+.sbtn:hover { border-color: var(--blue); color: var(--blue); }
+.sbtn.run   { border-color: var(--accent); color: var(--accent); animation: blink 1s infinite; }
+
+/* ── State badge ── */
+.state-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.sbadge {
+  font-size: 9px; padding: 3px 9px; border-radius: 12px;
+  background: var(--s3); color: var(--muted);
+  border: 1px solid var(--border); letter-spacing: 1px; text-transform: uppercase;
+}
+.sbadge.active { background: rgba(0,229,160,.15); color: var(--accent); border-color: rgba(0,229,160,.3); }
+
+/* ── Log ── */
+#logPanel { grid-column: 1 / 4; }
+#logBox {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; height: 100px; overflow-y: auto;
+  padding: 6px 10px; font-size: 10px; line-height: 1.9;
+}
+.ll { display: flex; gap: 10px; }
+.lt { color: var(--muted); min-width: 64px; }
+.lm.info  { color: var(--blue); }
+.lm.ok    { color: var(--accent); }
+.lm.warn  { color: var(--amber); }
+.lm.error { color: var(--red); }
+.lm.muted { color: #3a4060; }
+
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-thumb { background: var(--s3); border-radius: 2px; }
+
+/* ── Agent panel ── */
+.agent-model-badge {
+  display: inline-block; padding: 2px 10px; border-radius: 12px;
+  font-size: 9px; letter-spacing: 1px; text-transform: uppercase;
+  background: var(--s3); color: var(--muted); border: 1px solid var(--border);
+  margin-bottom: 10px; transition: all .3s;
+}
+.agent-model-badge.running { background: rgba(0,229,160,.15); color: var(--accent); border-color: rgba(0,229,160,.4); }
+
+.speech-bubble {
+  background: #0d1a14; border: 1px solid rgba(0,229,160,.2);
+  border-radius: 10px; padding: 10px 13px; margin-bottom: 10px;
+  min-height: 46px; display: flex; align-items: center;
+  animation: speechIn 0.35s ease;
+}
+@keyframes speechIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+#agentSpeech {
+  font-size: 12px; color: #9efcd3; line-height: 1.5;
+  font-style: italic; word-break: break-word;
+}
+
+.cmd-badge {
+  display: inline-block; padding: 3px 11px; border-radius: 12px;
+  font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+  font-weight: 700; transition: all .2s;
+}
+.cmd-badge.LEFT, .cmd-badge.RIGHT   { background: rgba(68,153,255,.18); color: #4499ff; border: 1px solid rgba(68,153,255,.3); }
+.cmd-badge.FORWARD, .cmd-badge.BACK { background: rgba(255,170,0,.15);  color: #ffaa00; border: 1px solid rgba(255,170,0,.25); }
+.cmd-badge.CENTERED                 { background: rgba(0,255,136,.15);   color: #00ff88; border: 1px solid rgba(0,255,136,.3); }
+.cmd-badge.NONE                     { background: var(--s3); color: var(--muted); border: 1px solid var(--border); }
+
+.conf-bar-wrap {
+  background: var(--s3); border-radius: 4px; height: 6px;
+  overflow: hidden; margin-bottom: 4px;
+}
+.conf-bar {
+  height: 100%; border-radius: 4px; transition: width .4s ease, background .4s ease;
+}
+.conf-bar.high { background: var(--accent); }
+.conf-bar.mid  { background: var(--amber); }
+.conf-bar.low  { background: var(--red); }
+
+#agentExploreLog {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; height: 90px; overflow-y: auto;
+  padding: 6px 10px; font-size: 10px; line-height: 1.8;
+  display: flex; flex-direction: column-reverse;
+}
+.alog-row { display: flex; gap: 8px; }
+.alog-ts  { color: var(--muted); min-width: 72px; flex-shrink: 0; font-size: 9px; }
+.alog-note { color: #5a6280; }
+
+.agent-btns { display: flex; gap: 8px; margin-top: 10px; }
+.abtn {
+  flex: 1; padding: 8px; border-radius: 6px;
+  font-family: var(--font); font-size: 10px; font-weight: 700;
+  letter-spacing: 1.5px; text-transform: uppercase;
+  cursor: pointer; border: none; transition: opacity .15s, transform .1s;
+}
+.abtn:hover  { opacity: .85; }
+.abtn:active { transform: scale(.97); }
+.abtn:disabled { opacity: .38; cursor: not-allowed; transform: none; }
+.abtn.start { background: #1a5c36; color: var(--accent); }
+.abtn.stop  { background: #5c1a1a; color: var(--red); }
+</style>
+</head>
+<body>
+
+<!-- ── Topbar ───────────────────────────────────────────────── -->
+<div id="topbar">
+  <div class="logo">◈ ROBOARM</div>
+  <div class="pills">
+    <div class="pill"><div class="dot off" id="dEsp"></div><span id="tEsp">ESP32 OFFLINE</span></div>
+    <div class="pill"><div class="dot amber" id="dCam"></div><span>CAMERA</span></div>
+    <div class="pill"><div class="dot off" id="dVis"></div><span id="tVis">VISION OFF</span></div>
+    <div class="pill" style="color:var(--text)" id="clock">00:00:00</div>
+  </div>
+</div>
+
+<!-- ── Grid ─────────────────────────────────────────────────── -->
+<div id="grid">
+
+  <!-- LEFT: Joints + Sequences -->
+  <div class="panel" style="grid-column:1; grid-row:1/3;">
+    <div class="ptitle">Joint Angles (°)</div>
+    <div id="sliders"></div>
+
+    <button class="btn" onclick="grip(false)">⊙ Open Gripper</button>
+    <button class="btn danger" onclick="grip(true)">⊗ Close Gripper</button>
+    <button class="send-btn" onclick="sendCmd()">▶ Send Manual Cmd</button>
+
+    <div class="ptitle" style="margin-top:14px;">Scripted Keyframes</div>
+    <div class="state-row" id="stateRow">
+      <span class="sbadge" id="kf-original">ORIGINAL</span>
+      <span class="sbadge" id="kf-moveX">MOVEX</span>
+      <span class="sbadge" id="kf-lift1">LIFT1</span>
+      <span class="sbadge" id="kf-moveY">MOVEY</span>
+      <span class="sbadge" id="kf-place">PLACE</span>
+      <span class="sbadge" id="kf-lift2">LIFT2</span>
+    </div>
+    <div class="seqgrid">
+      <button class="sbtn" onclick="runSeq('original')">Home</button>
+      <button class="sbtn" onclick="runSeq('moveX')">MoveX</button>
+      <button class="sbtn" onclick="runSeq('lift1')">Lift1</button>
+      <button class="sbtn" onclick="runSeq('moveY')">MoveY</button>
+      <button class="sbtn" onclick="runSeq('place')">Place</button>
+      <button class="sbtn" onclick="runSeq('lift2')">Lift2</button>
+      <button class="sbtn" onclick="runSeq('action')" style="border-color:var(--amber);color:var(--amber)">▶ Full Action</button>
+    </div>
+  </div>
+
+  <!-- CENTER: Arm Viz + Mode -->
+  <div class="panel" id="armPanel">
+    <div class="ptitle">Arm Visualizer — 2D Projection</div>
+    <div id="armWrap">
+      <svg id="armSvg" viewBox="0 0 400 340" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+    <div class="ptitle">Control Mode</div>
+    <button class="btn active" id="mManual"   onclick="setMode('manual')">⌨  Manual</button>
+    <button class="btn"        id="mScripted" onclick="setMode('scripted')">▶  Scripted (button on D1)</button>
+    <button class="btn"        id="mVisual"   onclick="setMode('visual')">👁  Visual Servoing</button>
+    <button class="btn"        id="mReset"   onclick="Reset()">👁  Reset</button>
+
+
+    <div class="ptitle" style="margin-top:10px;">Serial Commands (Visual Servo Mode)</div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+      <button class="btn" onclick="serialCmd('LEFT')">← LEFT</button>
+      <button class="btn" onclick="serialCmd('RIGHT')">RIGHT →</button>
+      <button class="btn" onclick="serialCmd('FORWARD')">↑ FORWARD</button>
+      <button class="btn" onclick="serialCmd('BACK')">↓ BACK</button>
+      <button class="btn" style="grid-column:1/3; border-color:var(--accent); color:var(--accent)"
+              onclick="serialCmd('CENTERED')">✓ CENTERED</button>
+    </div>
+  </div>
+
+  <!-- RIGHT: Camera + Sensors -->
+  <div class="panel" id="camPanel">
+    <div class="ptitle">Camera Feed</div>
+    <div class="cam-box" id="camBox">
+      <img id="camImg" src="/video_feed" alt="Camera Feed"
+           onerror="this.style.display='none'; document.getElementById('camPlaceholder').style.display='flex'">
+      <div class="cam-placeholder" id="camPlaceholder" style="display:none">
+        <div style="font-size:22px;margin-bottom:6px;">⬡</div>
+        No camera signal
+      </div>
+      <div class="cam-badge">LIVE</div>
+      <svg class="crosshair" width="28" height="28" viewBox="0 0 28 28">
+        <line x1="14" y1="0" x2="14" y2="28" stroke="rgba(255,255,255,.18)" stroke-width="1"/>
+        <line x1="0"  y1="14" x2="28" y2="14" stroke="rgba(255,255,255,.18)" stroke-width="1"/>
+        <circle cx="14" cy="14" r="3" fill="none" stroke="rgba(255,255,255,.25)" stroke-width="1"/>
+      </svg>
+    </div>
+
+    <div class="dbadge notfound" id="detectBadge">
+      <span>●</span><span id="detectTxt">No Object</span>
+    </div>
+
+    <div id="vsRow" style="display:none; align-items:center; gap:6px; margin-bottom:10px; flex-wrap:wrap;">
+      <span class="sbadge" id="vsPiState">ALIGN</span>
+      <span style="font-size:9px;color:var(--muted);">last cmd</span>
+      <span class="sbadge" id="vsLastCmd">—</span>
+    </div>
+
+    <div class="ptitle">Sensors</div>
+    <div class="mgrid">
+      <div class="mcard">
+        <div class="mlabel">Distance</div>
+        <div class="mval blue" id="mDist">—</div>
+        <div class="munit">cm (HC-SR04)</div>
+      </div>
+      <div class="mcard">
+        <div class="mlabel">Arm State</div>
+        <div class="mval green" id="mState" style="font-size:13px">IDLE</div>
+        <div class="munit">ESP32 FSM</div>
+      </div>
+      <div class="mcard">
+        <div class="mlabel">Err X</div>
+        <div class="mval amber" id="mErrX">—</div>
+        <div class="munit">px from center</div>
+      </div>
+      <div class="mcard">
+        <div class="mlabel">Err Y</div>
+        <div class="mval amber" id="mErrY">—</div>
+        <div class="munit">px from center</div>
+      </div>
+    </div>
+
+    <!-- Distance chart -->
+    <div style="position:relative; height:90px;">
+      <canvas id="distChart" role="img" aria-label="Distance over time">Distance sensor history</canvas>
+    </div>
+  </div>
+
+  <!-- BOTTOM-LEFT: Agent Panel -->
+  <div class="panel" style="grid-column:1/3;">
+    <div class="ptitle">Autonomous Agent</div>
+
+    <div id="agentModelBadge" class="agent-model-badge">MODEL: —</div>
+
+    <div class="speech-bubble" id="agentBubble">
+      <span id="agentSpeech">Agent offline. Start to begin exploration.</span>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+      <span style="font-size:9px;color:var(--muted);letter-spacing:1px;">CMD</span>
+      <span class="cmd-badge NONE" id="agentCmdBadge">NONE</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:10px;letter-spacing:1px;">CONFIDENCE</span>
+      <span id="agentConfTxt" style="font-size:10px;color:var(--muted);">—</span>
+    </div>
+
+    <div class="conf-bar-wrap">
+      <div class="conf-bar low" id="agentConfBar" style="width:0%"></div>
+    </div>
+
+    <div class="ptitle" style="margin-top:10px;margin-bottom:6px;">Exploration Log</div>
+    <div id="agentExploreLog"></div>
+
+    <div class="agent-btns">
+      <button class="abtn start" id="agentStartBtn" onclick="agentStart()">▶ Start Agent</button>
+      <button class="abtn stop"  id="agentStopBtn"  onclick="agentStop()" disabled>■ Stop</button>
+    </div>
+  </div>
+
+  <!-- BOTTOM-RIGHT: Log -->
+  <div class="panel" id="logPanel" style="grid-column:3;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;">
+      <div class="ptitle" style="margin-bottom:0">System Log</div>
+      <button onclick="clearLog()"
+        style="background:none;border:none;color:var(--muted);cursor:pointer;font-family:var(--font);font-size:9px;letter-spacing:1px;">
+        CLEAR
+      </button>
+    </div>
+    <div id="logBox"></div>
+  </div>
+
+</div><!-- /grid -->
+
+<script>
+// ── Servo config (mirrors firmware all_servo[]) ─────────────────────────
+const SERVOS = [
+  {name:"J0 BASE",     min:0,   max:180, angle:89,  label:"Yaw",        step:1},
+  {name:"J1 SHOULDER", min:0,   max:180, angle:115, label:"Pitch",      step:1},
+  {name:"J2 ELBOW",    min:0,   max:180, angle:90,  label:"Pitch",      step:1},
+  {name:"J3 WRIST",    min:0,   max:180, angle:80,  label:"Pitch",      step:1},
+  {name:"J4 WRISTROLL",min:0,   max:180, angle:90,  label:"Roll",       step:2},
+  {name:"J5 GRIPPER",  min:0,   max:180, angle:0,   label:"Open↔Close", step:2},
+];
+let angles      = SERVOS.map(s => s.angle);
+let currentMode = "manual";
+
+// ── Build sliders ───────────────────────────────────────────────────────
+const sliderWrap = document.getElementById("sliders");
+SERVOS.forEach((s, i) => {
+  sliderWrap.innerHTML += `
+  <div class="jrow">
+    <div class="jhead">
+      <span class="jname">${s.name}</span>
+      <span class="jval" id="av${i}">${s.angle}°</span>
+    </div>
+    <div class="jlimits">${s.label} — step ${s.step}°/tick</div>
+    <input type="range" min="${s.min}" max="${s.max}" value="${s.angle}"
+           step="${s.step}" id="sl${i}"
+           oninput="onSlider(${i},this.value)"
+           onchange="sendServo(${i},this.value)">
+  </div>`;
+});
+
+function onSlider(i, v) {
+  angles[i] = +v;
+  document.getElementById(`av${i}`).textContent = v + "°";
+  drawArm();
+}
+
+function setAnglesFromData(arr) {
+  arr.forEach((a, i) => {
+    angles[i] = a;
+    const sl = document.getElementById(`sl${i}`);
+    const av = document.getElementById(`av${i}`);
+    if (sl) sl.value = a;
+    if (av) av.textContent = a + "°";
+  });
+  drawArm();
+}
+
+// ── Arm SVG visualizer ──────────────────────────────────────────────────
+const svg = document.getElementById("armSvg");
+const ARM_SEGS = [70, 60, 50, 40, 30]; // visual lengths (px)
+const COLORS   = ["#00e5a0","#38b6ff","#38b6ff","#ffb020","#ffb020"];
+
+function drawArm() {
+  svg.innerHTML = "";
+
+  // Grid
+  for (let x = 0; x <= 400; x += 40) {
+    const l = makeSvg("line",{x1:x,y1:0,x2:x,y2:340,stroke:"#1b1f2c","stroke-width":"1"});
+    svg.appendChild(l);
+  }
+  for (let y = 0; y <= 340; y += 40) {
+    const l = makeSvg("line",{x1:0,y1:y,x2:400,y2:y,stroke:"#1b1f2c","stroke-width":"1"});
+    svg.appendChild(l);
+  }
+
+  // Base
+  const base = makeSvg("rect",{x:180,y:300,width:40,height:10,fill:"#232840",rx:"3"});
+  svg.appendChild(base);
+  const basePad = makeSvg("rect",{x:188,y:310,width:24,height:7,fill:"#1b1f2c",rx:"2"});
+  svg.appendChild(basePad);
+
+  let x = 200, y = 300;
+  let angle = -Math.PI / 2; // pointing up
+
+  for (let i = 0; i < 5; i++) {
+    const jAngle = (angles[Math.min(i+1, 4)] / 180) * Math.PI - Math.PI / 2;
+    angle += jAngle * 0.45;
+    const len = ARM_SEGS[i];
+    const nx  = x + Math.cos(angle) * len;
+    const ny  = y + Math.sin(angle) * len;
+    const col = COLORS[i];
+
+    // Segment
+    const seg = makeSvg("line",{
+      x1:x,y1:y,x2:nx,y2:ny,
+      stroke:col,"stroke-width": 5 - i * 0.6,
+      "stroke-linecap":"round"
+    });
+    svg.appendChild(seg);
+
+    // Joint circle
+    const jc = makeSvg("circle",{cx:x,cy:y,r:4,fill:"#0b0d12",stroke:col,"stroke-width":"1.5"});
+    svg.appendChild(jc);
+
+    x = nx; y = ny;
+  }
+
+  // End effector
+  const gOpen = angles[5] < 90;
+  const eCol  = gOpen ? "#00e5a0" : "#ff4d4d";
+  const eff   = makeSvg("circle",{cx:x,cy:y,r:6,fill:"none",stroke:eCol,"stroke-width":"2"});
+  svg.appendChild(eff);
+
+  // Gripper tines
+  if (gOpen) {
+    const t1 = makeSvg("line",{x1:x-4,y1:y-3,x2:x-8,y2:y-9,stroke:eCol,"stroke-width":"1.5","stroke-linecap":"round"});
+    const t2 = makeSvg("line",{x1:x+4,y1:y-3,x2:x+8,y2:y-9,stroke:eCol,"stroke-width":"1.5","stroke-linecap":"round"});
+    svg.appendChild(t1); svg.appendChild(t2);
+  } else {
+    const t1 = makeSvg("line",{x1:x-4,y1:y-3,x2:x-5,y2:y-8,stroke:eCol,"stroke-width":"1.5","stroke-linecap":"round"});
+    const t2 = makeSvg("line",{x1:x+4,y1:y-3,x2:x+5,y2:y-8,stroke:eCol,"stroke-width":"1.5","stroke-linecap":"round"});
+    svg.appendChild(t1); svg.appendChild(t2);
+  }
+
+  // Angle labels (dim)
+  SERVOS.forEach((s, i) => {
+    const lbl = makeSvg("text",{
+      x:6, y: 14 + i * 14,
+      fill:"#2d3352","font-size":"9","font-family":"JetBrains Mono, monospace"
+    });
+    lbl.textContent = `${s.name}: ${angles[i]}°`;
+    svg.appendChild(lbl);
+  });
+}
+
+function makeSvg(tag, attrs) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  Object.entries(attrs).forEach(([k,v]) => el.setAttribute(k, v));
+  return el;
+}
+drawArm();
+
+// ── Gripper ─────────────────────────────────────────────────────────────
+function grip(close) {
+  angles[5] = close ? 180 : 0;
+  const sl = document.getElementById("sl5");
+  const av = document.getElementById("av5");
+  if (sl) sl.value = angles[5];
+  if (av) av.textContent = angles[5] + "°";
+  drawArm();
+  log(close ? "Gripper → CLOSE" : "Gripper → OPEN", close ? "warn" : "ok");
+  sendServo(5, angles[5]);
+}
+
+// ── Serial commands ──────────────────────────────────────────────────────
+async function serialCmd(cmd) {
+  log(`→ ${cmd}`, "info");
+  try {
+    const r = await fetch("/api/command", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({cmd})
+    });
+    const d = await r.json();
+    if (!d.ok) log("✗ " + (d.error || "failed"), "error");
+    else log(`✓ ${cmd} sent`, "ok");
+  } catch(e) { log("✗ " + e.message, "error"); }
+}
+
+// ── Send single servo (debounced — only sends after slider settles) ───────
+const _servoTimers = {};
+function sendServo(i, v) {
+  if (currentMode !== "manual") return;
+  clearTimeout(_servoTimers[i]);
+  _servoTimers[i] = setTimeout(async () => {
+    try {
+      const r = await fetch("/api/servo", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({servo: i, angle: +v})
+      });
+      const d = await r.json();
+      if (d.ok) log(`J${i} → ${v}°`, "info");
+      else log(`✗ J${i}: ${d.error || "failed"}`, "error");
+    } catch(e) { log("✗ " + e.message, "error"); }
+  }, 150);
+}
+
+// ── Send all 6 angles to ESP32 (Send Manual Cmd button) ─────────────────
+async function sendCmd() {
+  if (currentMode !== "manual") { log("Switch to Manual mode first", "warn"); return; }
+  log("Sending all angles → " + angles.map((a,i)=>`J${i}=${a}`).join(" "), "info");
+  for (let i = 0; i < angles.length; i++) {
+    await sendServo(i, angles[i]);
+  }
+}
+
+// ── Sequences ────────────────────────────────────────────────────────────
+async function runSeq(name) {
+  document.querySelectorAll(".sbtn").forEach(b => b.classList.remove("run"));
+  const all = [...document.querySelectorAll(".sbtn")];
+  const match = all.find(b => b.textContent.trim().toLowerCase().replace(" ","") ===
+                               name.toLowerCase().replace(" ",""));
+  if (match) match.classList.add("run");
+
+  // Highlight the keyframe badge
+  document.querySelectorAll(".sbadge").forEach(b => b.classList.remove("active"));
+  const badge = document.getElementById("kf-" + name);
+  if (badge) badge.classList.add("active");
+
+  log(`▶ Sequence: ${name}`, "info");
+  try {
+    const r = await fetch(`/api/sequence/${name}`, {method:"POST"});
+    const d = await r.json();
+    log(`✓ ${name}: ${d.note || "triggered"}`, "ok");
+  } catch(e) { log("✗ " + e.message, "error"); }
+  if (match) match.classList.remove("run");
+}
+
+// ── Mode buttons ─────────────────────────────────────────────────────────
+function applyMode(m) {
+  currentMode = m;
+  ["manual","scripted","visual"].forEach(n => {
+    const id = "m" + n.charAt(0).toUpperCase() + n.slice(1);
+    document.getElementById(id)?.classList.toggle("active", n === m);
+  });
+  const visDot = document.getElementById("dVis");
+  const visTxt = document.getElementById("tVis");
+  if (m === "visual") {
+    visDot.className = "dot on";
+    visTxt.textContent = "VISION ON";
+  } else {
+    visDot.className = "dot off";
+    visTxt.textContent = "VISION OFF";
+    const vsRow = document.getElementById("vsRow");
+    if (vsRow) vsRow.style.display = "none";
+  }
+}
+
+function setMode(m) {
+  applyMode(m);
+  fetch("/api/mode", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({mode:m})
+  }).catch(()=>{});
+  log(`Mode → ${m.toUpperCase()}`, "info");
+}
+
+function Reset() {
+  fetch("/api/reset", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({mode:"reset"})
+  }).catch(()=>{});
+  log(`Mode → ${m.toUpperCase()}`, "info");
+}
+
+// ── Distance chart ────────────────────────────────────────────────────────
+const distData = Array(40).fill(0);
+const distChart = new Chart(document.getElementById("distChart"), {
+  type:"line",
+  data:{
+    labels: Array(40).fill(""),
+    datasets:[{
+      data: distData,
+      borderColor:"#38b6ff",
+      borderWidth: 1.5,
+      fill: true,
+      backgroundColor:"rgba(56,182,255,.07)",
+      pointRadius: 0,
+      tension: 0.4,
+    }]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    animation:{duration:0},
+    plugins:{legend:{display:false}},
+    scales:{
+      x:{display:false},
+      y:{
+        display:true,
+        min:0, max:50,
+        ticks:{color:"#5a6280", font:{size:9}, maxTicksLimit:4},
+        grid:{color:"rgba(255,255,255,.04)"}
+      }
+    }
+  }
+});
+
+function pushDist(v) {
+  distData.push(+v);
+  distData.shift();
+  distChart.data.datasets[0].data = [...distData];
+  distChart.update("none");
+}
+
+// ── Log ───────────────────────────────────────────────────────────────────
+function log(msg, level="info") {
+  const box = document.getElementById("logBox");
+  const t   = new Date().toLocaleTimeString("en-GB",{hour12:false});
+  const div = document.createElement("div");
+  div.className = "ll";
+  div.innerHTML = `<span class="lt">${t}</span><span class="lm ${level}">${msg}</span>`;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+function clearLog() { document.getElementById("logBox").innerHTML = ""; }
+
+// ── Clock ─────────────────────────────────────────────────────────────────
+setInterval(()=>{
+  document.getElementById("clock").textContent =
+    new Date().toLocaleTimeString("en-GB",{hour12:false});
+}, 1000);
+
+// ── Socket.IO ─────────────────────────────────────────────────────────────
+const socket = io({transports:["websocket"], reconnectionAttempts:10});
+
+socket.on("connect", ()=>{
+  log("Connected to Raspberry Pi dashboard server", "ok");
+  document.getElementById("dEsp").className = "dot amber";
+  document.getElementById("tEsp").textContent = "PI CONNECTED";
+});
+socket.on("disconnect", ()=>{
+  log("Disconnected", "error");
+  document.getElementById("dEsp").className = "dot off";
+  document.getElementById("tEsp").textContent = "OFFLINE";
+});
+socket.on("status", d => {
+  const dot = document.getElementById("dEsp");
+  const txt = document.getElementById("tEsp");
+  if (d.esp) { dot.className = "dot on"; txt.textContent = "ESP32 OK"; }
+  else        { dot.className = "dot off"; txt.textContent = "ESP32 OFFLINE"; }
+});
+socket.on("init", d => {
+  if (d.angles) setAnglesFromData(d.angles);
+  if (d.mode)   applyMode(d.mode);
+  if (d.log) d.log.forEach(e => log(e.msg, e.level));
+  log("State restored from server", "ok");
+});
+socket.on("joint_update", d => {
+  if (d.angles) setAnglesFromData(d.angles);
+});
+socket.on("sensor", d => {
+  if (d.distance !== undefined) {
+    const v = Math.round(d.distance * 10) / 10;
+    document.getElementById("mDist").textContent = v;
+    pushDist(v);
+    // Warn if very close
+    document.getElementById("mDist").className =
+      "mval " + (v <= 6 ? "redv" : v <= 15 ? "amber" : "blue");
+  }
+});
+socket.on("arm_state", d => {
+  const s = d.state || "IDLE";
+  document.getElementById("mState").textContent = s;
+  document.getElementById("mState").className =
+    "mval " + ({ALIGN:"blue",APPROACH:"amber",GRAB:"amber",DONE:"green",IDLE:"green"}[s]||"green");
+});
+
+socket.on("vision_update", d => {
+  const found = d.found;
+  const badge = document.getElementById("detectBadge");
+  const txt   = document.getElementById("detectTxt");
+  badge.className = "dbadge " + (found ? "found" : "notfound");
+  txt.textContent = found
+    ? `Detected  ${d.centroid ? `(${d.centroid[0]},${d.centroid[1]})` : ""}`
+    : "No Object";
+  if (d.err_x !== undefined) document.getElementById("mErrX").textContent = (d.err_x >= 0 ? "+" : "") + d.err_x;
+  if (d.err_y !== undefined) document.getElementById("mErrY").textContent = (d.err_y >= 0 ? "+" : "") + d.err_y;
+  document.getElementById("dVis").className = "dot " + (found ? "on" : "amber");
+});
+
+socket.on("log", e => log(e.msg, e.level));
+socket.on("mode_change", d => applyMode(d.mode));
+socket.on("vs_update", d => {
+  const row      = document.getElementById("vsRow");
+  const piState  = document.getElementById("vsPiState");
+  const lastCmd  = document.getElementById("vsLastCmd");
+  if (piState) {
+    piState.textContent = d.pi_state || "ALIGN";
+    piState.className   = "sbadge" + (d.pi_state === "WAITING_DONE" ? " active" : "");
+  }
+  if (lastCmd) lastCmd.textContent = d.last_cmd || "—";
+  if (row) row.style.display = "flex";
+});
+
+// ── Agent panel ───────────────────────────────────────────────────────────────
+const agentExploreBuf = [];
+const AGENT_LOG_MAX   = 10;
+
+function applyAgentRunning(running) {
+  const startBtn = document.getElementById("agentStartBtn");
+  const stopBtn  = document.getElementById("agentStopBtn");
+  const badge    = document.getElementById("agentModelBadge");
+  if (running) {
+    startBtn.disabled     = true;
+    startBtn.textContent  = "▶ Running...";
+    stopBtn.disabled      = false;
+    badge.classList.add("running");
+  } else {
+    startBtn.disabled     = false;
+    startBtn.textContent  = "▶ Start Agent";
+    stopBtn.disabled      = true;
+    badge.classList.remove("running");
+  }
+}
+
+function updateAgentConf(conf) {
+  const pct = Math.round(conf * 100);
+  const bar = document.getElementById("agentConfBar");
+  const txt = document.getElementById("agentConfTxt");
+  bar.style.width = pct + "%";
+  bar.className   = "conf-bar " + (conf >= 0.7 ? "high" : conf >= 0.4 ? "mid" : "low");
+  txt.textContent = pct + "%";
+}
+
+function pushAgentLog(ts, note) {
+  if (!note) return;
+  const box  = document.getElementById("agentExploreLog");
+  const row  = document.createElement("div");
+  row.className = "alog-row";
+  const shortTs = ts ? ts.slice(11, 19) : new Date().toLocaleTimeString("en-GB",{hour12:false});
+  row.innerHTML = `<span class="alog-ts">${shortTs}</span><span class="alog-note">${note}</span>`;
+  agentExploreBuf.unshift(row);
+  if (agentExploreBuf.length > AGENT_LOG_MAX) {
+    agentExploreBuf.pop();
+  }
+  box.innerHTML = "";
+  agentExploreBuf.forEach(r => box.appendChild(r));
+}
+
+socket.on("agent_update", d => {
+  if (d.speech) {
+    document.getElementById("agentSpeech").textContent = d.speech;
+    const bub = document.getElementById("agentBubble");
+    bub.style.animation = "none";
+    bub.offsetHeight;   // force reflow to restart animation
+    bub.style.animation = "";
+  }
+
+  if (d.model) {
+    document.getElementById("agentModelBadge").textContent = "MODEL: " + d.model;
+  }
+
+  const cmd = (d.command || "NONE").toUpperCase();
+  const cmdEl = document.getElementById("agentCmdBadge");
+  cmdEl.textContent = cmd;
+  cmdEl.className   = "cmd-badge " + cmd;
+
+  updateAgentConf(d.confidence || 0);
+  pushAgentLog(d.timestamp, d.note);
+});
+
+async function agentStart() {
+  log("Starting autonomous agent...", "info");
+  try {
+    const r = await fetch("/api/agent/start", {method:"POST", headers:{"Content-Type":"application/json"}, body:"{}"});
+    const d = await r.json();
+    if (d.ok) {
+      applyAgentRunning(true);
+      log(`Agent started (pid=${d.pid})`, "ok");
+    } else {
+      log("✗ Agent start failed: " + (d.error || "unknown"), "error");
+    }
+  } catch(e) { log("✗ " + e.message, "error"); }
+}
+
+async function agentStop() {
+  log("Stopping autonomous agent...", "warn");
+  try {
+    const r = await fetch("/api/agent/stop", {method:"POST"});
+    const d = await r.json();
+    if (d.ok) {
+      applyAgentRunning(false);
+      log("Agent stopped", "warn");
+    } else {
+      log("✗ Agent stop failed: " + (d.error || "unknown"), "error");
+    }
+  } catch(e) { log("✗ " + e.message, "error"); }
+}
+
+// Load initial state on page load (includes agent_running field)
+fetch("/api/state").then(r => r.json()).then(d => {
+  if (d.agent_running !== undefined) {
+    applyAgentRunning(d.agent_running);
+  }
+}).catch(() => {});
+</script>
+</body>
+</html>
