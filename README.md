@@ -28,6 +28,9 @@ The dashboard provides:
 * ⚙️ Scripted arm movements
 * 🔌 ESP32 communication status
 
+## Screenshot
+![Dashboard](/images/dashboard.png)
+
 ---
 
 ## 🏗️ System Architecture
