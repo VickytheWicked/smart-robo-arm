@@ -129,18 +129,6 @@ void setup() {
   delay(200);
 }
 
-// -------- ULTRASONIC --------
-// float getDistance() {
-//   digitalWrite(TRIG, LOW);
-//   delayMicroseconds(2);
-
-//   digitalWrite(TRIG, HIGH);
-//   delayMicroseconds(10);
-//   digitalWrite(TRIG, LOW);
-
-//   long duration = pulseIn(ECHO, HIGH);
-//   return duration * 0.034 / 2;
-// }
 
 // -------- MOVEMENT --------
 void moveLeft()  
@@ -227,7 +215,6 @@ void close()
 void loop()
 {
   String cmd;
-  // Serial.println("Waiting for command...");
   
   if (Serial.available())
   {
@@ -259,9 +246,6 @@ void loop()
     else if (state == "ALIGN")
     {
       
-      // Serial.print("State: ");
-      // Serial.println(state);
-
       if (cmd == "LEFT")
         moveLeft();
       else if (cmd == "RIGHT")
@@ -273,7 +257,6 @@ void loop()
 
       else if (cmd == "CENTERED")
       {
-        // state = "APPROACH";
         moveDown();
       }
       else if (cmd=="CATCH")
@@ -283,21 +266,7 @@ void loop()
       }
     }
 
-    //-------- APPROACH --------
-    // if (state == "APPROACH" && cmd == "CENTERED")
-    // {
-    //   // float d = getDistance();
-    //   // Serial.print("Distance: ");
-    //   // Serial.println(d);
-
-    //   moveDown();
-
-    //   // else
-    //   // {
-    //   //   state = "GRAB";
-    //   // }
-    // }
-
+    
     // -------- GRAB --------
     if (state == "GRAB")
     {
@@ -314,15 +283,7 @@ void loop()
     {
       state="ALIGN";
     }
-    // -------- DONE --------
-    // if (state == "DONE")
-    // {
-    //   // hold position
-    // }
-    // if (cmd != "CENTERED")
-    // {
-    //   state = "ALIGN";
-    // }
+    
 
     // Serial.print("TargetServo: ");
     // Serial.println(targetServo);
