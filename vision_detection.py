@@ -293,6 +293,379 @@ def detect_green_object(frame: np.ndarray) -> dict:
 
     return result
 
+
+def detect_yellow_object(frame: np.ndarray) -> dict:
+    """
+    Detect the largest green object in a BGR frame.
+
+    Returns:
+        found    : bool
+        centroid : (cx, cy) or None
+        bbox     : (x, y, w, h) or None
+        area     : float (px²)
+        mask     : binary mask
+        annotated: frame with drawings overlaid
+    """
+
+    result = dict(
+        found=False,
+        centroid=None,
+        bbox=None,
+        area=0.0,
+        mask=None,
+        annotated=frame.copy()
+    )
+
+    # Blur to reduce camera noise
+    blurred = cv2.GaussianBlur(frame, BLUR_KERNEL, 0)
+
+    # Convert BGR → HSV
+    hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+
+    # Green HSV range
+    YELLOW_LOWER = np.array([20, 100, 100])
+    YELLOW_UPPER = np.array([30, 255, 255])
+
+    # Create mask
+    mask = cv2.inRange(
+        hsv,
+        YELLOW_LOWER,
+        YELLOW_UPPER
+    )
+
+    # Clean mask
+    mask = cv2.morphologyEx(
+        mask,
+        cv2.MORPH_OPEN,
+        MORPH_KERNEL
+    )
+
+    mask = cv2.morphologyEx(
+        mask,
+        cv2.MORPH_DILATE,
+        MORPH_KERNEL
+    )
+
+    result["mask"] = mask
+
+    # Find contours
+    contours, _ = cv2.findContours(
+        mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if not contours:
+        return result
+
+    # Largest green region
+    largest = max(contours, key=cv2.contourArea)
+
+    area = cv2.contourArea(largest)
+
+    if area < MIN_CONTOUR_AREA:
+        return result
+
+    # Calculate centroid
+    M = cv2.moments(largest)
+
+    if M["m00"] == 0:
+        return result
+
+    cx = int(M["m10"] / M["m00"])
+    cy = int(M["m01"] / M["m00"])
+
+    # Bounding box
+    x, y, w, h = cv2.boundingRect(largest)
+
+    result.update(
+        found=True,
+        centroid=(cx, cy),
+        bbox=(x, y, w, h),
+        area=area
+    )
+
+    # --------------------------------------------------
+    # Annotation
+    # --------------------------------------------------
+
+    ann = frame.copy()
+
+    fh, fw = frame.shape[:2]
+
+    # Frame center
+    fcx = fw // 2
+    fcy = fh // 2
+
+    # Bounding box
+    cv2.rectangle(
+        ann,
+        (x, y),
+        (x + w, y + h),
+        (0, 255, 80),
+        2
+    )
+
+    # Contour
+    cv2.drawContours(
+        ann,
+        [largest],
+        -1,
+        (0, 200, 255),
+        1
+    )
+
+    # Centroid
+    cv2.circle(
+        ann,
+        (cx, cy),
+        7,
+        (0, 255, 80),
+        -1
+    )
+
+    cv2.circle(
+        ann,
+        (cx, cy),
+        9,
+        (255, 255, 255),
+        1
+    )
+
+    # Line from image center → object
+    cv2.line(
+        ann,
+        (fcx, fcy),
+        (cx, cy),
+        (255, 140, 0),
+        1
+    )
+
+    # Pixel error
+    err_x = cx - fcx
+    err_y = cy - fcy
+
+    # Labels
+    cv2.putText(
+        ann,
+        f"GREEN ({cx},{cy})",
+        (x, max(y - 26, 20)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (0, 255, 80),
+        1
+    )
+
+    cv2.putText(
+        ann,
+        f"area={int(area)}px2",
+        (x, max(y - 10, 35)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.42,
+        (0, 200, 80),
+        1
+    )
+
+    cv2.putText(
+        ann,
+        f"ErrX:{err_x:+d} ErrY:{err_y:+d}",
+        (8, fh - 12),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (100, 255, 100),
+        2
+    )
+
+    result["annotated"] = ann
+
+    return result
+
+
+def detect_white_object(frame: np.ndarray) -> dict:
+    """
+    Detect the largest green object in a BGR frame.
+
+    Returns:
+        found    : bool
+        centroid : (cx, cy) or None
+        bbox     : (x, y, w, h) or None
+        area     : float (px²)
+        mask     : binary mask
+        annotated: frame with drawings overlaid
+    """
+
+    result = dict(
+        found=False,
+        centroid=None,
+        bbox=None,
+        area=0.0,
+        mask=None,
+        annotated=frame.copy()
+    )
+
+    # Blur to reduce camera noise
+    blurred = cv2.GaussianBlur(frame, BLUR_KERNEL, 0)
+
+    # Convert BGR → HSV
+    hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+
+    # Green HSV range
+    WHITE_LOWER = np.array([0, 0, 200])
+    WHITE_UPPER = np.array([180, 50, 255])
+
+    # Create mask
+    mask = cv2.inRange(
+        hsv,
+        WHITE_LOWER,
+        WHITE_UPPER
+    )
+
+    # Clean mask
+    mask = cv2.morphologyEx(
+        mask,
+        cv2.MORPH_OPEN,
+        MORPH_KERNEL
+    )
+
+    mask = cv2.morphologyEx(
+        mask,
+        cv2.MORPH_DILATE,
+        MORPH_KERNEL
+    )
+
+    result["mask"] = mask
+
+    # Find contours
+    contours, _ = cv2.findContours(
+        mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if not contours:
+        return result
+
+    # Largest green region
+    largest = max(contours, key=cv2.contourArea)
+
+    area = cv2.contourArea(largest)
+
+    if area < MIN_CONTOUR_AREA:
+        return result
+
+    # Calculate centroid
+    M = cv2.moments(largest)
+
+    if M["m00"] == 0:
+        return result
+
+    cx = int(M["m10"] / M["m00"])
+    cy = int(M["m01"] / M["m00"])
+
+    # Bounding box
+    x, y, w, h = cv2.boundingRect(largest)
+
+    result.update(
+        found=True,
+        centroid=(cx, cy),
+        bbox=(x, y, w, h),
+        area=area
+    )
+
+    # --------------------------------------------------
+    # Annotation
+    # --------------------------------------------------
+
+    ann = frame.copy()
+
+    fh, fw = frame.shape[:2]
+
+    # Frame center
+    fcx = fw // 2
+    fcy = fh // 2
+
+    # Bounding box
+    cv2.rectangle(
+        ann,
+        (x, y),
+        (x + w, y + h),
+        (0, 255, 80),
+        2
+    )
+
+    # Contour
+    cv2.drawContours(
+        ann,
+        [largest],
+        -1,
+        (0, 200, 255),
+        1
+    )
+
+    # Centroid
+    cv2.circle(
+        ann,
+        (cx, cy),
+        7,
+        (0, 255, 80),
+        -1
+    )
+
+    cv2.circle(
+        ann,
+        (cx, cy),
+        9,
+        (255, 255, 255),
+        1
+    )
+
+    # Line from image center → object
+    cv2.line(
+        ann,
+        (fcx, fcy),
+        (cx, cy),
+        (255, 140, 0),
+        1
+    )
+
+    # Pixel error
+    err_x = cx - fcx
+    err_y = cy - fcy
+
+    # Labels
+    cv2.putText(
+        ann,
+        f"WHITE ({cx},{cy})",
+        (x, max(y - 26, 20)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (0, 255, 80),
+        1
+    )
+
+    cv2.putText(
+        ann,
+        f"area={int(area)}px2",
+        (x, max(y - 10, 35)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.42,
+        (0, 200, 80),
+        1
+    )
+
+    cv2.putText(
+        ann,
+        f"ErrX:{err_x:+d} ErrY:{err_y:+d}",
+        (8, fh - 12),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (100, 255, 100),
+        2
+    )
+
+    result["annotated"] = ann
+
+    return result
     
 def compute_pixel_error(centroid: tuple, frame_shape: tuple):
     """

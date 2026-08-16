@@ -20,7 +20,7 @@ import sys
 import json
 import subprocess
 import cv2
-from vision_detection import detect_red_object, compute_pixel_error,detect_green_object
+from vision_detection import detect_red_object, compute_pixel_error,detect_green_object,detect_white_object,detect_yellow_object
 
 # ── Config ────────────────────────────────────────────────────────────────
 SERIAL_PORT  = "/dev/ttyACM0"
@@ -30,8 +30,8 @@ PORT         = 3000
 
 
 # Visual servoing
-DEAD_ZONE_X   = 30    # px
-DEAD_ZONE_Y   = 30    # px
+DEAD_ZONE_X   = 70    # px
+DEAD_ZONE_Y   = 70    # px
 CMD_INTERVAL  = 0.08  # seconds between commands
 CENTERED_HOLD = 0.1   # seconds to wait after CENTERED before re-evaluating
 VS_TIMEOUT    = 15000.0  # seconds before auto-reset if grab never completes
@@ -39,10 +39,10 @@ VS_TIMEOUT    = 15000.0  # seconds before auto-reset if grab never completes
 
 # Servo calibration — mirrors all_servo[] in scripted/main.cpp
 SERVO_CONFIG = [
-    {"name": "Base",      "ch": 0, "max": 540, "min": 85,  "angle": 89,  "label": "Yaw"},
-    {"name": "Shoulder",  "ch": 1, "max": 520, "min": 90,  "angle": 115, "label": "Pitch"},
-    {"name": "Elbow",     "ch": 2, "max": 520, "min": 190, "angle": 90,  "label": "Pitch"},
-    {"name": "Wrist",     "ch": 3, "max": 400, "min": 100, "angle": 80,  "label": "Pitch"},
+    {"name": "Base",      "ch": 0, "max": 540, "min": 85,  "angle": 30,  "label": "Yaw"},
+    {"name": "Shoulder",  "ch": 1, "max": 520, "min": 90,  "angle": 0, "label": "Pitch"},
+    {"name": "Elbow",     "ch": 2, "max": 520, "min": 190, "angle": 180,  "label": "Pitch"},
+    {"name": "Wrist",     "ch": 3, "max": 400, "min": 100, "angle": 150,  "label": "Pitch"},
     {"name": "WristRoll", "ch": 4, "max": 550, "min": 100, "angle": 90,  "label": "Roll"},
     {"name": "Gripper",   "ch": 5, "max": 400, "min": 80,  "angle": 0,   "label": "Open↔Close"},
 ]
@@ -86,16 +86,25 @@ esp_log_lines = []
 def decide_command(err_x, err_y, area):
     in_x = abs(err_x) <= DEAD_ZONE_X        #to avoid jittering, we define a dead zone for x and y axis. If the error is within the dead zone, we consider it centered.
     in_y = abs(err_y) <= DEAD_ZONE_Y        #to avoid jittering, we define a dead zone for x and y axis. If the error is within the dead zone, we consider it centered.
-    in_area = area > 57000  # Example threshold for object size
+    in_area = area > 80000  # Example threshold for object size
+    in_area1=area>20000 and area<=50000
+    in_area2=area>50000 and area<=80000
+    speed="4"
 
-    if in_x and in_y and in_area:
+
+    if in_area1:
+        speed="2";
+    if in_area2:
+        speed="1";
+
+    if in_area:
         return "CATCH"
     if in_x and in_y:
-        return "CENTERED"
+        return "CENTERED:"+speed
     if not in_x:
-        return "RIGHT" if err_x > 0 else "LEFT"
+        return "RIGHT:"+speed if err_x > 0 else "LEFT:"+speed
     if not in_y:
-        return "FORWARD" if err_y > 0 else "BACK"
+        return "FORWARD:"+speed if err_y > 0 else "BACK:"+speed
     return None
 
 
@@ -222,7 +231,9 @@ def camera_thread():
             time.sleep(2)
             continue
 
-        result = detect_green_object(frame)      #for coordinate of red
+        result = detect_red_object(frame)      #for coordinate of red
+        # result = detect_green_object(frame)      #for coordinate of red
+
        
         annotated = result["annotated"]              #for marking and design
 

@@ -17,8 +17,9 @@ struct states
 
 };
 
-states original[6]={{0,1},{1,100},{2,90},{3,90},{4,90},{5,0}};
-
+states original[6]={{0,30},{1,180},{2,0},{3,40},{4,90},{5,0}};
+// states original[6]={{0,30},{3,40},{2,0},{1,180},{4,90},{5,0}};
+// states original[6]={{0,1},{1,100},{2,90},{3,90},{4,90},{5,0}};
 
 
 // -------- SERVOS --------
@@ -32,7 +33,8 @@ states original[6]={{0,1},{1,100},{2,90},{3,90},{4,90},{5,0}};
 const int servo_num = 6;
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 
-Servo all_servo[6] = {{0, 540, 85, 0},{1, 520, 90, 111},{2, 520, 190, 91}, {3, 400, 100, 91}, {4, 550, 100, 91}, {5, 400, 80,1}};
+Servo all_servo[6] = {{0, 540, 85, 31},{1, 520, 90, 179},{2, 520, 190, 1}, {3, 400, 100, 51}, {4, 550, 100, 91}, {5, 400, 80,1}};
+// Servo all_servo[6] = {{0, 540, 85, 0},{1, 520, 90, 111},{2, 520, 190, 91}, {3, 400, 100, 91}, {4, 550, 100, 91}, {5, 400, 80,1}};
 int targetAngle = -1;
 int targetServo = -1;
 
@@ -112,87 +114,90 @@ void angleSet()
 // -------- SETUP --------
 void setup() {
   Serial.begin(115200);
+  Serial.setTxTimeoutMs(0); 
+
 
   pwm.begin();
   pwm.setPWMFreq(50); // 50 Hz for servo 
 
   // pinMode(TRIG, OUTPUT);
   // pinMode(ECHO, INPUT);
+  
+
+
 
   for(int i=0;i<6;i++)
   {
     targetServo=original[i].ind;
     targetAngle=original[i].angle;
     angleSet();
+    
   }
 
   delay(200);
 }
 
-
+int speed=8;
 // -------- MOVEMENT --------
-void moveLeft()  
+void moveLeft(int i)  
 { 
   targetServo=0;
-  targetAngle=all_servo[targetServo].currentAngle+2;
+  targetAngle=all_servo[targetServo].currentAngle+i;
 
   
   angleSet(); 
 }
-void moveRight()
+void moveRight(int i)
 {
   targetServo=0;
-  targetAngle=all_servo[targetServo].currentAngle-2;
+  targetAngle=all_servo[targetServo].currentAngle-i;
 
   
   angleSet();  
 }
 
-void moveForward() 
+void moveForward(int i) 
 { 
   targetServo=1;
-  targetAngle=all_servo[targetServo].currentAngle-2;
+  targetAngle=all_servo[targetServo].currentAngle-i;
   angleSet(); 
 }
-void moveBack()  
+void moveBack(int i)  
 {
   targetServo=1;
-  targetAngle=all_servo[targetServo].currentAngle+2;
-
-  
-
+  targetAngle=all_servo[targetServo].currentAngle+i;
   angleSet();  
 }
 
-void extendArm()
+void extendArm(int i)
 {
   targetServo=1;
-  targetAngle=all_servo[targetServo].currentAngle+1;
+  targetAngle=all_servo[targetServo].currentAngle+i;
   angleSet(); 
 }
-void retractArm()  
+void retractArm(int i)  
 { 
   targetServo=2;
-  targetAngle=all_servo[targetServo].currentAngle-1;
+  targetAngle=all_servo[targetServo].currentAngle-i;
   angleSet();  
 }
 
-void moveDown() {
+void moveDown(int i) {
 //adjust elbow=1 and shoulder=2
   targetServo=2;
-  targetAngle=all_servo[targetServo].currentAngle+2;
+  targetAngle=all_servo[targetServo].currentAngle+i;
   angleSet();
   targetServo=1;
-  targetAngle=all_servo[targetServo].currentAngle-2;
+  targetAngle=all_servo[targetServo].currentAngle-i;
   angleSet();
 }
 
-void moveUp() {
+void moveUp(int i) {
   targetServo=2;
-  targetAngle=all_servo[targetServo].currentAngle-2;
+  targetAngle=all_servo[targetServo].currentAngle-i;
   angleSet();
   targetServo=1;
-  targetAngle=all_servo[targetServo].currentAngle+2;
+  targetAngle=all_servo[targetServo].currentAngle+i;
   angleSet();
 }
 
@@ -221,8 +226,7 @@ void loop()
     cmd = Serial.readStringUntil('\n');
     cmd.trim();
 
-    Serial.print("Command: ");
-    Serial.println(cmd);
+    
     
     
 
@@ -243,28 +247,33 @@ void loop()
         Serial.println(all_servo[idx].currentAngle);
       }
     }
-    else if (state == "ALIGN")
+    else if (state == "ALIGN" && cmd.indexOf(':')>0)
     {
-      
-      if (cmd == "LEFT")
-        moveLeft();
-      else if (cmd == "RIGHT")
-        moveRight();
-      else if (cmd == "FORWARD")
-        moveForward();
-      else if (cmd == "BACK")
-        moveBack();
+      String direction=cmd.substring(0,cmd.indexOf(':'));
+      speed=cmd.substring(cmd.indexOf(':')+1).toInt();
 
-      else if (cmd == "CENTERED")
+      Serial.print("Command: ");
+      Serial.println(direction);
+      
+      if (direction == "LEFT")
+        moveLeft(speed);
+      else if (direction == "RIGHT")
+        moveRight(speed);
+      else if (direction == "FORWARD")
+        moveForward(speed);
+      else if (direction == "BACK")
+        moveBack(speed);
+
+      else if (direction == "CENTERED")
       {
-        moveDown();
+        moveDown(speed);
       }
-      else if (cmd=="CATCH")
+    }
+    else if (cmd=="CATCH")
       {
         state = "GRAB";
 
       }
-    }
 
     
     // -------- GRAB --------
@@ -273,15 +282,22 @@ void loop()
       close();
       delay(500);
 
-      moveUp(); // lift slightly
       delay(300);
 
       state = "DONE";
+      speed=8;
     }
+
 
     if(cmd=="RESET")
     {
       state="ALIGN";
+      for(int i=0;i<6;i++)
+      {
+        targetServo=original[i].ind;
+        targetAngle=original[i].angle;
+        angleSet();
+      }
     }
     
 
