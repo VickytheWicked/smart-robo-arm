@@ -1,2 +1,4 @@
 __pycache__/
 .myenv/
+.training_corrections/
+./robot_teach_dataset/
