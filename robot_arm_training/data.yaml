@@ -1,0 +1,19 @@
+path: /home/vansh/Work/smart-robo-arm/robot_arm_training
+
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 10
+
+names:
+  0: eraser
+  1: glue
+  2: marker
+  3: pen
+  4: pencil
+  5: ruler
+  6: scissor
+  7: sharpener
+  8: stapler
+  9: tape

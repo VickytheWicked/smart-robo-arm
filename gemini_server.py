@@ -4,13 +4,32 @@ import json
 import logging
 import os
 
+from robot.arm import RobotArm
+from robot.tools import create_robot_tools
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from gemini_live import GeminiLive
+from gemini_live_v2 import GeminiLive
 from twilio_handler import TwilioHandler
+
+
+#Tool calling config
+robot_arm = RobotArm(
+    server_url="https://127.0.0.1:3000"
+)
+robot_tools = create_robot_tools()
+
+robot_tool_mapping = {
+    "move_arm": robot_arm.move_arm,
+    "move_joint": robot_arm.move_joint,
+    "reset_arm": robot_arm.reset_arm,
+    "open_gripper": robot_arm.open_gripper,
+    "close_gripper": robot_arm.close_gripper
+}
+
 
 # Load environment variables
 load_dotenv()
@@ -41,14 +60,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve static files
-# app.mount("/static", StaticFiles(directory="frontend"), name="static")
-
-
-# @app.get("/")
-# async def root():
-#     return FileResponse("dashboard2.html")
-
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -69,7 +80,9 @@ async def websocket_endpoint(websocket: WebSocket):
         pass
 
     gemini_client = GeminiLive(
-        api_key=GEMINI_API_KEY, model=MODEL, input_sample_rate=16000
+        api_key=GEMINI_API_KEY, model=MODEL, input_sample_rate=16000,
+        tools=robot_tools,
+        tool_mapping=robot_tool_mapping
     )
 
     async def receive_from_client():

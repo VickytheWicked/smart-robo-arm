@@ -22,6 +22,8 @@ import subprocess
 import cv2
 from vision_detection import detect_red_object, compute_pixel_error,detect_green_object,detect_white_object,detect_yellow_object
 
+#For tool calling purpose
+
 # Optional YOLO support. Existing visual-servo behavior remains available
 # even if Ultralytics/model weights are unavailable.
 try:
@@ -316,6 +318,7 @@ def serial_reader_thread():
 
 def send_serial(cmd: str):
     global ser_conn
+
     if ser_conn and ser_conn.is_open:
         try:
             ser_conn.write((cmd + "\n").encode())
@@ -327,6 +330,8 @@ def send_serial(cmd: str):
     else:
         add_log("ESP32 not connected", "warn")
     return False
+
+#To give the send_serial functionality for tool calling
 
 
 # ── Camera thread ─────────────────────────────────────────────────────────
@@ -504,12 +509,7 @@ def index():
 def video_feed():
     return Response(gen_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
-# @app.route("/api/state")
-# def api_state():
-#     with state_lock:
-#         s = dict(state)
-#     s["agent_running"] = agent_proc["running"]
-#     return jsonify(s)
+
 
 
 #For direct commands on the UI (LEFT/RIGHT/FORWARD/BACK/CENTERED).
@@ -521,7 +521,7 @@ def api_command():
     VALID = {"LEFT", "RIGHT", "FORWARD", "BACK", "CENTERED"}
     if cmd not in VALID:
         return jsonify({"ok": False, "error": f"Unknown command: {cmd}"}), 400
-    ok = send_serial(cmd)
+    ok = send_serial(cmd+":8")
     return jsonify({"ok": ok})
 
 @app.route("/api/gripper/<action>", methods=["POST"])
@@ -532,10 +532,12 @@ def api_gripper(action):
     # by encoding as a comment — in manual mode the Pi can send direct angle commands
     if action == "open":
         add_log("Gripper OPEN (manual)", "warn")
-        return jsonify({"ok": True, "note": "Gripper open — ESP32 state machine controls gripper in AUTO mode"})
+        ok=send_serial("S5:0")
+        return jsonify({"ok":ok})
     elif action == "close":
         add_log("Gripper CLOSE (manual)", "warn")
-        return jsonify({"ok": True})
+        ok=send_serial("S5:180")
+        return jsonify({"ok": ok})
     return jsonify({"ok": False}), 400
 
 
@@ -574,7 +576,6 @@ def api_reset():
     sio.emit("mode_change", {"mode": "manual"})
     sio.emit("vs_update", {"pi_state": "ALIGN", "last_cmd": None})
     return jsonify({"ok": True})
-
 
 INVERTED_SERVOS = {1, 2, 3}  # shoulder, elbow, wrist — physically mounted inverted
 
@@ -701,14 +702,7 @@ def on_update_angles(data):
             state["angles"] = angles
         sio.emit("joint_update", {"angles": angles})
 
-# @sio.on("vision_data")
-# def on_vision_data(data):
-#     """visual_servoing.py pushes detection data here."""
-#     with state_lock:
-#         state["detected"] = data.get("found", False)
-#         state["err_x"]    = data.get("err_x", 0)
-#         state["err_y"]    = data.get("err_y", 0)
-#     sio.emit("vision_update", data)
+
 
 
 if __name__ == "__main__":
@@ -716,8 +710,7 @@ if __name__ == "__main__":
     print(f"[DASHBOARD] Starting on http://0.0.0.0:{PORT}")
     threading.Thread(target=serial_reader_thread, daemon=True).start()
 
-    threading.Thread(target=camera_thread,        daemon=True).start()
-    # threading.Thread(target=agent_log_tailer,     daemon=True).start()
+    threading.Thread(target=camera_thread,daemon=True).start()
    
    
     # Always boot in manual mode

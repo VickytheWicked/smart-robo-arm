@@ -7,6 +7,8 @@ logger = logging.getLogger(__name__)
 from google import genai
 from google.genai import types
 
+
+
 class GeminiLive:
     """
     Handles the interaction with the Gemini Live API.
@@ -29,7 +31,12 @@ class GeminiLive:
         self.tools = tools or []
         self.tool_mapping = tool_mapping or {}
 
+        
+
+
+
     async def start_session(self, audio_input_queue, video_input_queue, text_input_queue, audio_output_callback, audio_interrupt_callback=None):
+        
         config = types.LiveConnectConfig(
             response_modalities=[types.Modality.AUDIO],
             speech_config=types.SpeechConfig(
