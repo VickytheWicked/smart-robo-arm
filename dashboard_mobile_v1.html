@@ -1,0 +1,1496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RoboArm — Control Dashboard</title>
+<meta name="theme-color" content="#0b0d12">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+:root {
+  --bg:      #0b0d12;
+  --s1:      #13161f;
+  --s2:      #1b1f2c;
+  --s3:      #232840;
+  --border:  rgba(255,255,255,0.07);
+  --accent:  #00e5a0;
+  --blue:    #38b6ff;
+  --amber:   #ffb020;
+  --red:     #ff4d4d;
+  --muted:   #5a6280;
+  --text:    #dde2f0;
+  --font:    'JetBrains Mono', 'Courier New', monospace;
+  --r:       8px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 12px; overflow-x: hidden; }
+
+/* ── Topbar ── */
+#topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 20px;
+  background: var(--s1);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 99;
+}
+.logo { font-size: 14px; font-weight: 700; letter-spacing: 3px; color: var(--accent); }
+.pills { display: flex; gap: 10px; }
+.pill {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 20px;
+  background: var(--s2); border: 1px solid var(--border);
+  font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--muted);
+}
+.dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--muted);
+}
+.dot.on  { background: var(--accent); box-shadow: 0 0 6px var(--accent); animation: blink 2s infinite; }
+.dot.off { background: var(--red); }
+.dot.amber { background: var(--amber); }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.35} }
+#clock { color: var(--muted); font-size: 11px; }
+
+/* ── Layout ── */
+#grid {
+  display: grid;
+  grid-template-columns: 270px minmax(520px,1fr) 420px;
+  grid-template-rows: auto auto;
+  gap: 10px;
+  padding: 12px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* ── Panel ── */
+.panel {
+  background: var(--s1);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 12px 14px;
+}
+.ptitle {
+  font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 10px;
+  padding-bottom: 7px; border-bottom: 1px solid var(--border);
+}
+
+/* ── Joint sliders ── */
+.jrow { margin-bottom: 11px; }
+.jhead { display: flex; justify-content: space-between; margin-bottom: 3px; }
+.jname { font-size: 10px; color: var(--accent); font-weight: 700; }
+.jval  { font-size: 10px; color: var(--text); }
+.jlimits { font-size: 9px; color: var(--muted); margin-bottom: 3px; }
+input[type=range] {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 3px;
+  background: var(--s3); border-radius: 2px; outline: none; cursor: pointer;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 12px; height: 12px;
+  border-radius: 50%; background: var(--accent);
+  border: 2px solid var(--bg); cursor: pointer;
+  transition: transform .1s;
+}
+input[type=range]:hover::-webkit-slider-thumb { transform: scale(1.25); }
+
+/* ── Arm SVG viz ── */
+#armPanel { grid-column: 2; grid-row: 1 / 3; }
+#armWrap {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg); border-radius: 6px;
+  border: 1px solid var(--border);
+  padding: 10px; margin-bottom: 10px;
+  height: 340px;
+}
+#armSvg { width: 100%; height: 100%; }
+
+/* ── Camera & sensors ── */
+#camPanel { grid-column: 3; grid-row: 1 / 3; }
+.cam-box {
+  background: #000; border-radius: 6px; border: 1px solid var(--border);
+  aspect-ratio: 4/3; min-height: 320px; position: relative; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 8px;
+}
+.cam-box img { width: 100%; object-fit: cover; }
+.cam-placeholder { color: var(--muted); font-size: 10px; text-align: center; }
+.cam-badge {
+  position: absolute; top: 6px; left: 6px;
+  font-size: 9px; padding: 2px 7px; border-radius: 4px;
+  background: rgba(0,0,0,.65); color: var(--accent); letter-spacing: 1px;
+}
+.crosshair {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%,-50%); pointer-events: none;
+}
+
+/* ── Metric grid ── */
+.mgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 10px; }
+.mcard {
+  background: var(--s2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 10px;
+}
+.mlabel { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 2px; }
+.mval   { font-size: 19px; font-weight: 700; line-height: 1; }
+.munit  { font-size: 9px; color: var(--muted); margin-top: 2px; }
+.green  { color: var(--accent); }
+.blue   { color: var(--blue); }
+.amber  { color: var(--amber); }
+.redv   { color: var(--red); }
+
+/* ── Detect badge ── */
+.dbadge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 10px; padding: 3px 9px; border-radius: 4px;
+  margin-bottom: 10px;
+}
+.dbadge.found    { background: rgba(0,229,160,.12); color: var(--accent);  border: 1px solid rgba(0,229,160,.25); }
+.dbadge.notfound { background: rgba(255,77,77,.10);  color: var(--red);    border: 1px solid rgba(255,77,77,.2); }
+
+/* ── Buttons ── */
+.btn {
+  display: block; width: 100%; padding: 8px;
+  background: var(--s2); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--muted);
+  font-family: var(--font); font-size: 10px;
+  letter-spacing: 1px; text-transform: uppercase;
+  cursor: pointer; transition: all .15s; margin-bottom: 6px; text-align: left;
+}
+.btn:hover { border-color: var(--blue); color: var(--text); }
+.btn.active { background: rgba(0,229,160,.1); border-color: var(--accent); color: var(--accent); }
+.btn.danger:hover { border-color: var(--red); color: var(--red); }
+
+.send-btn {
+  display: block; width: 100%; margin-top: 10px;
+  padding: 9px; background: var(--accent); color: #000;
+  border: none; border-radius: 6px; font-family: var(--font);
+  font-size: 11px; font-weight: 700; letter-spacing: 2px;
+  text-transform: uppercase; cursor: pointer;
+  transition: opacity .15s, transform .1s;
+}
+.send-btn:hover  { opacity: .85; }
+.send-btn:active { transform: scale(.97); }
+
+/* ── Sequences ── */
+.seqgrid { display: flex; flex-wrap: wrap; gap: 5px; }
+.sbtn {
+  padding: 4px 11px; background: var(--s2); border: 1px solid var(--border);
+  border-radius: 20px; color: var(--muted); font-family: var(--font);
+  font-size: 9px; letter-spacing: 1px; text-transform: uppercase;
+  cursor: pointer; transition: all .15s;
+}
+.sbtn:hover { border-color: var(--blue); color: var(--blue); }
+.sbtn.run   { border-color: var(--accent); color: var(--accent); animation: blink 1s infinite; }
+
+/* ── State badge ── */
+.state-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.sbadge {
+  font-size: 9px; padding: 3px 9px; border-radius: 12px;
+  background: var(--s3); color: var(--muted);
+  border: 1px solid var(--border); letter-spacing: 1px; text-transform: uppercase;
+}
+.sbadge.active { background: rgba(0,229,160,.15); color: var(--accent); border-color: rgba(0,229,160,.3); }
+
+/* ── Log ── */
+#logPanel { grid-column: 1 / 4; }
+#logBox {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; height: 100px; overflow-y: auto;
+  padding: 6px 10px; font-size: 10px; line-height: 1.9;
+}
+.ll { display: flex; gap: 10px; }
+.lt { color: var(--muted); min-width: 64px; }
+.lm.info  { color: var(--blue); }
+.lm.ok    { color: var(--accent); }
+.lm.warn  { color: var(--amber); }
+.lm.error { color: var(--red); }
+.lm.muted { color: #3a4060; }
+
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-thumb { background: var(--s3); border-radius: 2px; }
+
+/* ============================================================
+   GEMINI VOICE
+   ============================================================ */
+
+.voice-panel {
+  margin-top: 12px;
+  background: var(--s2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 10px;
+}
+
+.voice-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.voice-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.voice-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--red);
+}
+
+.voice-dot.connected {
+  background: var(--accent);
+  box-shadow: 0 0 7px var(--accent);
+}
+
+.voice-dot.listening {
+  background: var(--amber);
+  box-shadow: 0 0 7px var(--amber);
+  animation: blink .8s infinite;
+}
+
+.voice-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.voice-btn {
+  flex: 1;
+  padding: 8px 5px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--s1);
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all .15s;
+}
+
+.voice-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.voice-btn:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+}
+
+.voice-btn.connect {
+  color: var(--accent);
+}
+
+.voice-btn.disconnect {
+  color: var(--red);
+}
+
+.voice-btn.mic {
+  color: var(--blue);
+}
+
+.voice-btn.mic.listening {
+  background: rgba(255,176,32,.12);
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.voice-transcript {
+  margin-top: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 7px;
+  min-height: 34px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.voice-transcript .user {
+  color: var(--blue);
+}
+
+.voice-transcript .assistant {
+  color: var(--accent);
+}
+
+    .chat-log{max-height:110px;overflow-y:auto;margin-top:8px;display:flex;flex-direction:column;gap:6px}
+    .chat-log .message{max-width:90%;padding:6px 8px;border-radius:5px;font-size:9px;line-height:1.4}
+    .chat-log .user{align-self:flex-end;background:rgba(56,182,255,.12);color:var(--blue)}
+    .chat-log .assistant{align-self:flex-start;background:rgba(0,229,160,.08);color:var(--accent)}
+    .chat-log .system{align-self:center;color:var(--muted);font-size:8px}
+
+
+/* YOLO TRAINING MODE */
+.training-toggle{margin-top:10px;padding:10px;background:var(--s2);border:1px solid var(--border);border-radius:7px}
+.training-toggle-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.training-switch{position:relative;width:42px;height:22px;flex:0 0 auto}
+.training-switch input{opacity:0;width:0;height:0}
+.training-slider{position:absolute;inset:0;cursor:pointer;background:var(--s3);border:1px solid var(--border);border-radius:20px;transition:.15s}
+.training-slider:before{content:"";position:absolute;width:16px;height:16px;left:2px;top:2px;border-radius:50%;background:var(--muted);transition:.15s}
+.training-switch input:checked+.training-slider{background:rgba(0,229,160,.15);border-color:var(--accent)}
+.training-switch input:checked+.training-slider:before{transform:translateX(20px);background:var(--accent);box-shadow:0 0 7px rgba(0,229,160,.45)}
+.training-summary{margin-top:8px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px}
+.training-stat{background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:6px;text-align:center}
+.training-stat .n{display:block;font-size:14px;font-weight:700;color:var(--accent)}
+.training-stat .l{display:block;font-size:8px;color:var(--muted);margin-top:2px}
+.training-actions{display:flex;gap:5px;margin-top:7px}.training-actions .btn{margin:0}
+.train-status{margin-top:7px;font-size:9px;line-height:1.5;color:var(--muted)}
+.train-status.ok{color:var(--accent)}.train-status.warn{color:var(--amber)}.train-status.error{color:var(--red)}
+#trainingModal{position:fixed;inset:0;z-index:300;display:none;background:rgba(0,0,0,.72);backdrop-filter:blur(4px);align-items:center;justify-content:center;padding:20px}
+#trainingModal.show{display:flex}
+.training-card{width:min(1050px,96vw);max-height:92vh;overflow:auto;background:var(--s1);border:1px solid var(--border);border-radius:10px;box-shadow:0 20px 70px rgba(0,0,0,.5);padding:14px}
+.training-card-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+.training-card-title{color:var(--accent);font-size:11px;letter-spacing:2px;text-transform:uppercase}
+.training-card-subtitle{color:var(--muted);font-size:9px;margin-top:4px}
+.training-review-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:10px}
+#trainingImageWrap{position:relative;background:#000;border:1px solid var(--border);border-radius:7px;overflow:hidden;min-height:320px}
+#trainingImage{display:block;width:100%;height:auto;max-height:65vh;object-fit:contain}
+#annotationCanvas{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair}
+.training-side{background:var(--s2);border:1px solid var(--border);border-radius:7px;padding:10px}
+.review-question{font-size:10px;line-height:1.5;color:var(--text);margin-bottom:9px}
+.review-detections{max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
+.review-item{padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg)}
+.review-item-head{display:flex;justify-content:space-between;gap:6px;margin-bottom:5px}
+.review-item-title{color:var(--accent);font-size:9px;font-weight:700}.review-item-conf{color:var(--muted);font-size:8px}
+.review-item select,.review-class-select{width:100%;padding:6px;background:var(--s1);color:var(--text);border:1px solid var(--border);border-radius:5px;font-family:var(--font);font-size:9px}
+.review-item-actions{display:flex;gap:5px;margin-top:5px}.review-item-actions button{flex:1;padding:5px;border-radius:5px;background:var(--s2);color:var(--muted);border:1px solid var(--border);font:9px var(--font);cursor:pointer}
+.review-item-actions button:hover{border-color:var(--blue);color:var(--text)}
+.review-item-actions button.accept{color:var(--accent);border-color:rgba(0,229,160,.25)}.review-item-actions button.wrong{color:var(--amber);border-color:rgba(255,176,32,.25)}
+.review-controls{display:flex;gap:6px;margin-top:10px}.review-controls .send-btn{margin:0}
+.training-help{margin-top:8px;padding:7px;border:1px dashed var(--border);border-radius:5px;color:var(--muted);font-size:8px;line-height:1.5}
+.manual-box-state{color:var(--amber);font-size:9px;margin-top:6px}
+.batch-panel{margin-top:10px;padding:9px;background:var(--s2);border:1px solid var(--border);border-radius:7px}
+.batch-panel h4{color:var(--text);font-size:9px;letter-spacing:1px;margin-bottom:7px}
+.batch-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
+.batch-grid div{background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:7px;text-align:center;font-size:8px;color:var(--muted)}
+.batch-grid b{display:block;color:var(--accent);font-size:13px;margin-bottom:2px}
+@media(max-width:900px){.training-review-layout{grid-template-columns:1fr}.batch-grid{grid-template-columns:1fr 1fr}}
+
+
+/* ============================================================
+   MOBILE / TABLET RESPONSIVE UI
+   Keeps the existing desktop dashboard intact while adapting
+   controls, camera, training review and Gemini for phones.
+   ============================================================ */
+
+html { -webkit-text-size-adjust: 100%; }
+body { min-width: 0; }
+
+button, input, select {
+  touch-action: manipulation;
+}
+
+@media (max-width: 900px) {
+  body {
+    font-size: 11px;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  #topbar {
+    padding: 9px 10px;
+    gap: 8px;
+  }
+
+  .logo {
+    font-size: 12px;
+    letter-spacing: 2px;
+    white-space: nowrap;
+  }
+
+  #clock { display: none; }
+
+  .pills {
+    flex: 1;
+    justify-content: flex-end;
+    gap: 4px;
+    overflow: hidden;
+  }
+
+  .pill {
+    padding: 4px 6px;
+    font-size: 8px;
+    gap: 4px;
+    white-space: nowrap;
+  }
+
+  /* Hide verbose labels on very small screens but retain status dots. */
+  .pill:nth-child(2) span,
+  .pill:nth-child(3) span {
+    display: none;
+  }
+
+  #grid {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+  }
+
+  .panel {
+    width: 100%;
+    padding: 10px;
+    border-radius: 9px;
+  }
+
+  /* Mobile information order:
+     camera -> detection/sensors -> arm -> controls -> Gemini -> log */
+  #camPanel { order: 1; }
+  #armPanel { order: 2; }
+  #grid > .panel[style*="grid-column:1; grid-row:1/3;"] { order: 3; }
+  #grid > .panel[style*="grid-column:1/3;"] { order: 4; }
+  #logPanel { order: 5; }
+
+  #armPanel,
+  #camPanel,
+  #logPanel {
+    grid-column: auto !important;
+    grid-row: auto !important;
+  }
+
+  .ptitle {
+    font-size: 9px;
+    margin-bottom: 8px;
+  }
+
+  /* Camera becomes the primary mobile viewport. */
+  .cam-box {
+    width: 100%;
+    min-height: 0;
+    aspect-ratio: 4 / 3;
+    margin-bottom: 8px;
+  }
+
+  .cam-box img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  /* Bigger touch target for controls. */
+  .btn,
+  .send-btn,
+  .sbtn,
+  .voice-btn {
+    min-height: 40px;
+  }
+
+  .btn {
+    padding: 10px;
+    font-size: 9px;
+  }
+
+  .send-btn {
+    padding: 11px;
+    font-size: 10px;
+  }
+
+  .seqgrid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+  }
+
+  .sbtn {
+    padding: 9px 7px;
+    border-radius: 7px;
+    font-size: 8px;
+  }
+
+  /* Arm visualizer */
+  #armWrap {
+    height: min(55vw, 300px);
+    min-height: 230px;
+    padding: 5px;
+  }
+
+  #armSvg {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Control modes become a compact grid. */
+  #mManual, #mScripted, #mVisual, #mReset {
+    width: calc(50% - 3px);
+    display: inline-block;
+    vertical-align: top;
+  }
+
+  #mManual, #mVisual {
+    margin-right: 3px;
+  }
+
+  #mScripted, #mReset {
+    margin-left: 3px;
+  }
+
+  /* Visual-servo command pad */
+  #armPanel .ptitle + button + button + button + .training-toggle + button + .ptitle {
+    margin-top: 8px;
+  }
+
+  /* Sensor cards */
+  .mgrid {
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+
+  .mcard {
+    padding: 9px;
+    min-height: 65px;
+  }
+
+  .mval {
+    font-size: 17px;
+  }
+
+  /* Training panel */
+  .training-toggle {
+    padding: 9px;
+  }
+
+  .training-summary {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .training-actions {
+    flex-direction: column;
+  }
+
+  .training-actions .btn {
+    width: 100%;
+  }
+
+  /* Gemini */
+  .voice-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+
+  .voice-btn {
+    min-height: 42px;
+  }
+
+  #geminiTextInput {
+    min-width: 0;
+    font-size: 10px !important;
+    min-height: 42px;
+  }
+
+  #geminiSendBtn {
+    min-height: 42px;
+  }
+
+  .chat-log {
+    max-height: 180px;
+  }
+
+  /* Log gets enough height to be useful on touch devices. */
+  #logBox {
+    height: 150px;
+    font-size: 9px;
+  }
+
+  .ll {
+    gap: 7px;
+  }
+
+  .lt {
+    min-width: 54px;
+  }
+
+  /* Training modal */
+  #trainingModal {
+    padding: 7px;
+    align-items: flex-start;
+    overflow-y: auto;
+  }
+
+  .training-card {
+    width: 100%;
+    max-width: none;
+    max-height: none;
+    min-height: calc(100vh - 14px);
+    overflow: visible;
+    padding: 10px;
+    border-radius: 9px;
+  }
+
+  .training-card-head {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    background: var(--s1);
+    padding-bottom: 8px;
+  }
+
+  .training-review-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  #trainingImageWrap {
+    min-height: 0;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+  }
+
+  #trainingImage {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .training-side {
+    width: 100%;
+  }
+
+  .review-detections {
+    max-height: 240px;
+  }
+
+  .review-controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .review-controls:first-of-type {
+    display: block;
+  }
+
+  .review-controls .send-btn,
+  .review-controls .btn {
+    min-height: 42px;
+  }
+
+  .batch-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* Make annotation drawing comfortable with fingers. */
+  #annotationCanvas {
+    touch-action: none;
+  }
+}
+
+/* Narrow phones */
+@media (max-width: 480px) {
+  #topbar {
+    position: sticky;
+    top: 0;
+  }
+
+  .pill {
+    padding: 4px 5px;
+  }
+
+  .pill:nth-child(1) span {
+    max-width: 55px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  #armWrap {
+    height: 250px;
+  }
+
+  .jrow {
+    margin-bottom: 13px;
+  }
+
+  input[type=range] {
+    height: 5px;
+  }
+
+  input[type=range]::-webkit-slider-thumb {
+    width: 20px;
+    height: 20px;
+  }
+
+  input[type=range]::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--bg);
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .training-summary .n {
+    font-size: 13px;
+  }
+
+  .training-summary .l {
+    font-size: 7px;
+  }
+
+  .review-item {
+    padding: 8px;
+  }
+
+  .review-item-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .review-item-actions button {
+    min-height: 40px;
+  }
+
+  .cam-badge {
+    font-size: 8px;
+  }
+}
+
+/* Landscape phone / small tablet: use two columns where useful. */
+@media (min-width: 600px) and (max-width: 900px) {
+  #grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+
+  #camPanel {
+    grid-column: 1 / 3 !important;
+  }
+
+  #armPanel {
+    grid-column: 1 / 3 !important;
+  }
+
+  #grid > .panel[style*="grid-column:1; grid-row:1/3;"] {
+    grid-column: 1 / 3 !important;
+  }
+
+  #grid > .panel[style*="grid-column:1/3;"] {
+    grid-column: 1 / 3 !important;
+  }
+
+  #logPanel {
+    grid-column: 1 / 3 !important;
+  }
+
+  .training-review-layout {
+    grid-template-columns: 1fr 300px;
+    display: grid;
+  }
+}
+
+/* Prevent accidental horizontal overflow from long logs/messages. */
+.message,
+.lm,
+.train-status,
+.training-card-subtitle {
+  overflow-wrap: anywhere;
+}
+
+</style>
+</head>
+<body>
+
+<!-- ── Topbar ───────────────────────────────────────────────── -->
+<div id="topbar">
+  <div class="logo">◈ ROBOARM</div>
+  <div class="pills">
+    <div class="pill"><div class="dot off" id="dEsp"></div><span id="tEsp">ESP32 OFFLINE</span></div>
+    <div class="pill"><div class="dot amber" id="dCam"></div><span>CAMERA</span></div>
+    <div class="pill"><div class="dot off" id="dVis"></div><span id="tVis">VISION OFF</span></div>
+    <div class="pill" style="color:var(--text)" id="clock">00:00:00</div>
+  </div>
+</div>
+
+<!-- ── Grid ─────────────────────────────────────────────────── -->
+<div id="grid">
+
+  <!-- LEFT: Joints + Sequences -->
+  <div class="panel" style="grid-column:1; grid-row:1/3;">
+    <div class="ptitle">Joint Angles (°)</div>
+    <div id="sliders"></div>
+
+    <button class="btn" onclick="grip(false)">⊙ Open Gripper</button>
+    <button class="btn danger" onclick="grip(true)">⊗ Close Gripper</button>
+    <button class="send-btn" onclick="sendCmd()">▶ Send Manual Cmd</button>
+
+    <div class="ptitle" style="margin-top:14px;">Scripted Keyframes</div>
+    <div class="state-row" id="stateRow">
+      <span class="sbadge" id="kf-original">ORIGINAL</span>
+      <span class="sbadge" id="kf-moveX">MOVEX</span>
+      <span class="sbadge" id="kf-lift1">LIFT1</span>
+      <span class="sbadge" id="kf-moveY">MOVEY</span>
+      <span class="sbadge" id="kf-place">PLACE</span>
+      <span class="sbadge" id="kf-lift2">LIFT2</span>
+    </div>
+    <div class="seqgrid">
+      <button class="sbtn" onclick="runSeq('original')">Home</button>
+      <button class="sbtn" onclick="runSeq('moveX')">MoveX</button>
+      <button class="sbtn" onclick="runSeq('lift1')">Lift1</button>
+      <button class="sbtn" onclick="runSeq('moveY')">MoveY</button>
+      <button class="sbtn" onclick="runSeq('place')">Place</button>
+      <button class="sbtn" onclick="runSeq('lift2')">Lift2</button>
+      <button class="sbtn" onclick="runSeq('action')" style="border-color:var(--amber);color:var(--amber)">▶ Full Action</button>
+    </div>
+  </div>
+
+  <!-- CENTER: Arm Viz + Mode -->
+  <div class="panel" id="armPanel">
+    <div class="ptitle">Arm Visualizer — 2D Projection</div>
+    <div id="armWrap">
+      <svg id="armSvg" viewBox="0 0 400 340" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+    <div class="ptitle">Control Mode</div>
+    <button class="btn active" id="mManual"   onclick="setMode('manual')">⌨  Manual</button>
+    <button class="btn"        id="mScripted" onclick="setMode('scripted')">▶  Scripted (button on D1)</button>
+    <button class="btn"        id="mVisual"   onclick="setMode('visual')">👁  Visual Servoing</button>
+    <div class="training-toggle">
+      <div class="training-toggle-row">
+        <div><div style="font-size:10px;color:var(--text);font-weight:700;">YOLO Training Mode</div>
+        <div style="font-size:8px;color:var(--muted);margin-top:3px;">Human-in-the-loop annotation & incremental learning</div></div>
+        <label class="training-switch"><input type="checkbox" id="trainingModeToggle" onchange="toggleTrainingMode(this.checked)"><span class="training-slider"></span></label>
+      </div>
+      <div class="training-summary">
+        <div class="training-stat"><span class="n" id="trainImages">0</span><span class="l">IMAGES</span></div>
+        <div class="training-stat"><span class="n" id="trainCorrections">0</span><span class="l">CORRECTIONS</span></div>
+        <div class="training-stat"><span class="n" id="trainBoxes">0</span><span class="l">BOXES</span></div>
+      </div>
+      <div class="training-actions">
+        <button class="btn" onclick="openTrainingReview()">✎ REVIEW CURRENT FRAME</button>
+        <button class="btn" onclick="refreshTrainingBatch()">↻ REFRESH</button>
+      </div>
+      <div class="train-status" id="trainStatus">Training mode is OFF.</div>
+    </div>
+
+    <button class="btn"        id="mReset"   onclick="Reset()">👁  Reset</button>
+
+
+    <div class="ptitle" style="margin-top:10px;">Serial Commands (Visual Servo Mode)</div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+      <button class="btn" onclick="serialCmd('LEFT')">← LEFT</button>
+      <button class="btn" onclick="serialCmd('RIGHT')">RIGHT →</button>
+      <button class="btn" onclick="serialCmd('FORWARD')">↑ FORWARD</button>
+      <button class="btn" onclick="serialCmd('BACK')">↓ BACK</button>
+      <button class="btn" style="grid-column:1/3; border-color:var(--accent); color:var(--accent)"
+              onclick="serialCmd('CENTERED')">✓ CENTERED</button>
+    </div>
+  </div>
+
+  <!-- RIGHT: Camera + Sensors -->
+  <div class="panel" id="camPanel">
+    <div class="ptitle">Camera Feed</div>
+    <div class="cam-box" id="camBox">
+      <img id="camImg" src="/video_feed" alt="Camera Feed"
+           onerror="this.style.display='none'; document.getElementById('camPlaceholder').style.display='flex'">
+      <div class="cam-placeholder" id="camPlaceholder" style="display:none">
+        <div style="font-size:22px;margin-bottom:6px;">⬡</div>
+        No camera signal
+      </div>
+      <div class="cam-badge">LIVE</div>
+      <svg class="crosshair" width="28" height="28" viewBox="0 0 28 28">
+        <line x1="14" y1="0" x2="14" y2="28" stroke="rgba(255,255,255,.18)" stroke-width="1"/>
+        <line x1="0"  y1="14" x2="28" y2="14" stroke="rgba(255,255,255,.18)" stroke-width="1"/>
+        <circle cx="14" cy="14" r="3" fill="none" stroke="rgba(255,255,255,.25)" stroke-width="1"/>
+      </svg>
+    </div>
+
+    <div class="dbadge notfound" id="detectBadge">
+      <span>●</span><span id="detectTxt">No Object</span>
+    </div>
+
+    <div id="vsRow" style="display:none; align-items:center; gap:6px; margin-bottom:10px; flex-wrap:wrap;">
+      <span class="sbadge" id="vsPiState">ALIGN</span>
+      <span style="font-size:9px;color:var(--muted);">last cmd</span>
+      <span class="sbadge" id="vsLastCmd">—</span>
+    </div>
+
+    <div class="ptitle">Sensors</div>
+    <div class="mgrid">
+      <div class="mcard">
+        <div class="mlabel">Distance</div>
+        <div class="mval blue" id="mDist">—</div>
+        <div class="munit">cm (HC-SR04)</div>
+      </div>
+      <div class="mcard">
+        <div class="mlabel">Arm State</div>
+        <div class="mval green" id="mState" style="font-size:13px">IDLE</div>
+        <div class="munit">ESP32 FSM</div>
+      </div>
+      <div class="mcard">
+        <div class="mlabel">Err X</div>
+        <div class="mval amber" id="mErrX">—</div>
+        <div class="munit">px from center</div>
+      </div>
+      <div class="mcard">
+        <div class="mlabel">Err Y</div>
+        <div class="mval amber" id="mErrY">—</div>
+        <div class="munit">px from center</div>
+      </div>
+    </div>
+
+    <!-- Distance chart -->
+    <div style="position:relative; height:90px;">
+      <canvas id="distChart" role="img" aria-label="Distance over time">Distance sensor history</canvas>
+    </div>
+  </div>
+
+  <!-- BOTTOM-LEFT: Gemini Live -->
+  <div class="panel" style="grid-column:1/3;">
+    <div class="ptitle">Gemini Live</div>
+    <div class="voice-panel">
+      <div class="voice-status-row">
+        <div class="voice-status">
+          <span class="voice-dot" id="geminiVoiceDot"></span>
+          <span id="geminiVoiceStatus">GEMINI OFFLINE</span>
+        </div>
+        <span class="agent-model-badge" id="geminiModelBadge" style="margin:0;">LIVE</span>
+      </div>
+      <div class="voice-buttons">
+        <button class="voice-btn connect" id="geminiConnectBtn">CONNECT</button>
+        <button class="voice-btn disconnect" id="geminiDisconnectBtn">DISCONNECT</button>
+        <button class="voice-btn mic" id="geminiVoiceBtn" disabled>🎙 VOICE</button>
+        <button class="voice-btn" id="geminiCameraBtn" disabled>📷 CAMERA</button>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:8px;">
+        <input type="text" id="geminiTextInput" placeholder="Ask Gemini..." autocomplete="off"
+          style="flex:1;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:var(--font);font-size:10px;outline:none;">
+        <button class="voice-btn" id="geminiSendBtn" style="flex:0 0 65px;">SEND</button>
+      </div>
+      <div class="chat-log" id="chat-log"></div>
+    </div>
+  </div>
+
+  <!-- BOTTOM-RIGHT: Log -->
+  <div class="panel" id="logPanel" style="grid-column:3;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;">
+      <div class="ptitle" style="margin-bottom:0">System Log</div>
+      <button onclick="clearLog()"
+        style="background:none;border:none;color:var(--muted);cursor:pointer;font-family:var(--font);font-size:9px;letter-spacing:1px;">
+        CLEAR
+      </button>
+    </div>
+    <div id="logBox"></div>
+  </div>
+
+</div><!-- /grid -->
+
+<script>
+// ── Servo config (mirrors firmware all_servo[]) ─────────────────────────
+const SERVOS = [
+  {name:"J0 BASE",     min:0,   max:180, angle:89,  label:"Yaw",        step:1},
+  {name:"J1 SHOULDER", min:0,   max:180, angle:115, label:"Pitch",      step:1},
+  {name:"J2 ELBOW",    min:0,   max:180, angle:90,  label:"Pitch",      step:1},
+  {name:"J3 WRIST",    min:0,   max:180, angle:80,  label:"Pitch",      step:1},
+  {name:"J4 WRISTROLL",min:0,   max:180, angle:90,  label:"Roll",       step:2},
+  {name:"J5 GRIPPER",  min:0,   max:180, angle:0,   label:"Open↔Close", step:2},
+];
+let angles      = SERVOS.map(s => s.angle);
+let currentMode = "manual";
+
+// ── Build sliders ───────────────────────────────────────────────────────
+const sliderWrap = document.getElementById("sliders");
+SERVOS.forEach((s, i) => {
+  sliderWrap.innerHTML += `
+  <div class="jrow">
+    <div class="jhead">
+      <span class="jname">${s.name}</span>
+      <span class="jval" id="av${i}">${s.angle}°</span>
+    </div>
+    <div class="jlimits">${s.label} — step ${s.step}°/tick</div>
+    <input type="range" min="${s.min}" max="${s.max}" value="${s.angle}"
+           step="${s.step}" id="sl${i}"
+           oninput="onSlider(${i},this.value)"
+           onchange="sendServo(${i},this.value)">
+  </div>`;
+});
+
+function onSlider(i, v) {
+  angles[i] = +v;
+  document.getElementById(`av${i}`).textContent = v + "°";
+  drawArm();
+}
+
+function setAnglesFromData(arr) {
+  arr.forEach((a, i) => {
+    angles[i] = a;
+    const sl = document.getElementById(`sl${i}`);
+    const av = document.getElementById(`av${i}`);
+    if (sl) sl.value = a;
+    if (av) av.textContent = a + "°";
+  });
+  drawArm();
+}
+
+// ── Arm SVG visualizer ──────────────────────────────────────────────────
+const svg = document.getElementById("armSvg");
+const ARM_SEGS = [70, 60, 50, 40, 30]; // visual lengths (px)
+const COLORS   = ["#00e5a0","#38b6ff","#38b6ff","#ffb020","#ffb020"];
+
+function drawArm() {
+  svg.innerHTML = "";
+
+  // Grid
+  for (let x = 0; x <= 400; x += 40) {
+    const l = makeSvg("line",{x1:x,y1:0,x2:x,y2:340,stroke:"#1b1f2c","stroke-width":"1"});
+    svg.appendChild(l);
+  }
+  for (let y = 0; y <= 340; y += 40) {
+    const l = makeSvg("line",{x1:0,y1:y,x2:400,y2:y,stroke:"#1b1f2c","stroke-width":"1"});
+    svg.appendChild(l);
+  }
+
+  // Base
+  const base = makeSvg("rect",{x:180,y:300,width:40,height:10,fill:"#232840",rx:"3"});
+  svg.appendChild(base);
+  const basePad = makeSvg("rect",{x:188,y:310,width:24,height:7,fill:"#1b1f2c",rx:"2"});
+  svg.appendChild(basePad);
+
+  let x = 200, y = 300;
+  let angle = -Math.PI / 2; // pointing up
+
+  for (let i = 0; i < 5; i++) {
+    const jAngle = (angles[Math.min(i+1, 4)] / 180) * Math.PI - Math.PI / 2;
+    angle += jAngle * 0.45;
+    const len = ARM_SEGS[i];
+    const nx  = x + Math.cos(angle) * len;
+    const ny  = y + Math.sin(angle) * len;
+    const col = COLORS[i];
+
+    // Segment
+    const seg = makeSvg("line",{
+      x1:x,y1:y,x2:nx,y2:ny,
+      stroke:col,"stroke-width": 5 - i * 0.6,
+      "stroke-linecap":"round"
+    });
+    svg.appendChild(seg);
+
+    // Joint circle
+    const jc = makeSvg("circle",{cx:x,cy:y,r:4,fill:"#0b0d12",stroke:col,"stroke-width":"1.5"});
+    svg.appendChild(jc);
+
+    x = nx; y = ny;
+  }
+
+  // End effector
+  const gOpen = angles[5] < 90;
+  const eCol  = gOpen ? "#00e5a0" : "#ff4d4d";
+  const eff   = makeSvg("circle",{cx:x,cy:y,r:6,fill:"none",stroke:eCol,"stroke-width":"2"});
+  svg.appendChild(eff);
+
+  // Gripper tines
+  if (gOpen) {
+    const t1 = makeSvg("line",{x1:x-4,y1:y-3,x2:x-8,y2:y-9,stroke:eCol,"stroke-width":"1.5","stroke-linecap":"round"});
+    const t2 = makeSvg("line",{x1:x+4,y1:y-3,x2:x+8,y2:y-9,stroke:eCol,"stroke-width":"1.5","stroke-linecap":"round"});
+    svg.appendChild(t1); svg.appendChild(t2);
+  } else {
+    const t1 = makeSvg("line",{x1:x-4,y1:y-3,x2:x-5,y2:y-8,stroke:eCol,"stroke-width":"1.5","stroke-linecap":"round"});
+    const t2 = makeSvg("line",{x1:x+4,y1:y-3,x2:x+5,y2:y-8,stroke:eCol,"stroke-width":"1.5","stroke-linecap":"round"});
+    svg.appendChild(t1); svg.appendChild(t2);
+  }
+
+  // Angle labels (dim)
+  SERVOS.forEach((s, i) => {
+    const lbl = makeSvg("text",{
+      x:6, y: 14 + i * 14,
+      fill:"#2d3352","font-size":"9","font-family":"JetBrains Mono, monospace"
+    });
+    lbl.textContent = `${s.name}: ${angles[i]}°`;
+    svg.appendChild(lbl);
+  });
+}
+
+function makeSvg(tag, attrs) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  Object.entries(attrs).forEach(([k,v]) => el.setAttribute(k, v));
+  return el;
+}
+drawArm();
+
+// ── Gripper ─────────────────────────────────────────────────────────────
+function grip(close) {
+  angles[5] = close ? 180 : 0;
+  const sl = document.getElementById("sl5");
+  const av = document.getElementById("av5");
+  if (sl) sl.value = angles[5];
+  if (av) av.textContent = angles[5] + "°";
+  drawArm();
+  log(close ? "Gripper → CLOSE" : "Gripper → OPEN", close ? "warn" : "ok");
+  sendServo(5, angles[5]);
+}
+
+// ── Serial commands ──────────────────────────────────────────────────────
+async function serialCmd(cmd) {
+  log(`→ ${cmd}`, "info");
+  try {
+    const r = await fetch("/api/command", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({cmd})
+    });
+    const d = await r.json();
+    if (!d.ok) log("✗ " + (d.error || "failed"), "error");
+    else log(`✓ ${cmd} sent`, "ok");
+  } catch(e) { log("✗ " + e.message, "error"); }
+}
+
+// ── Send single servo (debounced — only sends after slider settles) ───────
+const _servoTimers = {};
+function sendServo(i, v) {
+  if (currentMode !== "manual") return;
+  clearTimeout(_servoTimers[i]);
+  _servoTimers[i] = setTimeout(async () => {
+    try {
+      const r = await fetch("/api/servo", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({servo: i, angle: +v})
+      });
+      const d = await r.json();
+      if (d.ok) log(`J${i} → ${v}°`, "info");
+      else log(`✗ J${i}: ${d.error || "failed"}`, "error");
+    } catch(e) { log("✗ " + e.message, "error"); }
+  }, 150);
+}
+
+// ── Send all 6 angles to ESP32 (Send Manual Cmd button) ─────────────────
+async function sendCmd() {
+  if (currentMode !== "manual") { log("Switch to Manual mode first", "warn"); return; }
+  log("Sending all angles → " + angles.map((a,i)=>`J${i}=${a}`).join(" "), "info");
+  for (let i = 0; i < angles.length; i++) {
+    await sendServo(i, angles[i]);
+  }
+}
+
+// ── Sequences ────────────────────────────────────────────────────────────
+async function runSeq(name) {
+  document.querySelectorAll(".sbtn").forEach(b => b.classList.remove("run"));
+  const all = [...document.querySelectorAll(".sbtn")];
+  const match = all.find(b => b.textContent.trim().toLowerCase().replace(" ","") ===
+                               name.toLowerCase().replace(" ",""));
+  if (match) match.classList.add("run");
+
+  // Highlight the keyframe badge
+  document.querySelectorAll(".sbadge").forEach(b => b.classList.remove("active"));
+  const badge = document.getElementById("kf-" + name);
+  if (badge) badge.classList.add("active");
+
+  log(`▶ Sequence: ${name}`, "info");
+  try {
+    const r = await fetch(`/api/sequence/${name}`, {method:"POST"});
+    const d = await r.json();
+    log(`✓ ${name}: ${d.note || "triggered"}`, "ok");
+  } catch(e) { log("✗ " + e.message, "error"); }
+  if (match) match.classList.remove("run");
+}
+
+// ── Mode buttons ─────────────────────────────────────────────────────────
+function applyMode(m) {
+  currentMode = m;
+  ["manual","scripted","visual"].forEach(n => {
+    const id = "m" + n.charAt(0).toUpperCase() + n.slice(1);
+    document.getElementById(id)?.classList.toggle("active", n === m);
+  });
+  const visDot = document.getElementById("dVis");
+  const visTxt = document.getElementById("tVis");
+  if (m === "visual") {
+    visDot.className = "dot on";
+    visTxt.textContent = "VISION ON";
+  } else {
+    visDot.className = "dot off";
+    visTxt.textContent = "VISION OFF";
+    const vsRow = document.getElementById("vsRow");
+    if (vsRow) vsRow.style.display = "none";
+  }
+}
+
+function setMode(m) {
+  applyMode(m);
+  fetch("/api/mode", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({mode:m})
+  }).catch(()=>{});
+  log(`Mode → ${m.toUpperCase()}`, "info");
+}
+
+function Reset() {
+  fetch("/api/reset", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({mode:"reset"})
+  }).catch(()=>{});
+  log("Reset requested", "info");
+}
+
+// ── Distance chart ────────────────────────────────────────────────────────
+const distData = Array(40).fill(0);
+const distChart = new Chart(document.getElementById("distChart"), {
+  type:"line",
+  data:{
+    labels: Array(40).fill(""),
+    datasets:[{
+      data: distData,
+      borderColor:"#38b6ff",
+      borderWidth: 1.5,
+      fill: true,
+      backgroundColor:"rgba(56,182,255,.07)",
+      pointRadius: 0,
+      tension: 0.4,
+    }]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    animation:{duration:0},
+    plugins:{legend:{display:false}},
+    scales:{
+      x:{display:false},
+      y:{
+        display:true,
+        min:0, max:50,
+        ticks:{color:"#5a6280", font:{size:9}, maxTicksLimit:4},
+        grid:{color:"rgba(255,255,255,.04)"}
+      }
+    }
+  }
+});
+
+function pushDist(v) {
+  distData.push(+v);
+  distData.shift();
+  distChart.data.datasets[0].data = [...distData];
+  distChart.update("none");
+}
+
+// ── Log ───────────────────────────────────────────────────────────────────
+function log(msg, level="info") {
+  const box = document.getElementById("logBox");
+  const t   = new Date().toLocaleTimeString("en-GB",{hour12:false});
+  const div = document.createElement("div");
+  div.className = "ll";
+  div.innerHTML = `<span class="lt">${t}</span><span class="lm ${level}">${msg}</span>`;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+function clearLog() { document.getElementById("logBox").innerHTML = ""; }
+
+// ── Clock ─────────────────────────────────────────────────────────────────
+setInterval(()=>{
+  document.getElementById("clock").textContent =
+    new Date().toLocaleTimeString("en-GB",{hour12:false});
+}, 1000);
+
+// ── Socket.IO ─────────────────────────────────────────────────────────────
+const socket = io({transports:["websocket"], reconnectionAttempts:10});
+
+socket.on("connect", ()=>{
+  log("Connected to Raspberry Pi dashboard server", "ok");
+  document.getElementById("dEsp").className = "dot amber";
+  document.getElementById("tEsp").textContent = "PI CONNECTED";
+});
+socket.on("disconnect", ()=>{
+  log("Disconnected", "error");
+  document.getElementById("dEsp").className = "dot off";
+  document.getElementById("tEsp").textContent = "OFFLINE";
+});
+socket.on("status", d => {
+  const dot = document.getElementById("dEsp");
+  const txt = document.getElementById("tEsp");
+  if (d.esp) { dot.className = "dot on"; txt.textContent = "ESP32 OK"; }
+  else        { dot.className = "dot off"; txt.textContent = "ESP32 OFFLINE"; }
+});
+socket.on("init", d => {
+  if (d.angles) setAnglesFromData(d.angles);
+  if (d.mode)   applyMode(d.mode);
+  if (d.log) d.log.forEach(e => log(e.msg, e.level));
+  log("State restored from server", "ok");
+});
+socket.on("joint_update", d => {
+  if (d.angles) setAnglesFromData(d.angles);
+});
+socket.on("sensor", d => {
+  if (d.distance !== undefined) {
+    const v = Math.round(d.distance * 10) / 10;
+    document.getElementById("mDist").textContent = v;
+    pushDist(v);
+    // Warn if very close
+    document.getElementById("mDist").className =
+      "mval " + (v <= 6 ? "redv" : v <= 15 ? "amber" : "blue");
+  }
+});
+socket.on("arm_state", d => {
+  const s = d.state || "IDLE";
+  document.getElementById("mState").textContent = s;
+  document.getElementById("mState").className =
+    "mval " + ({ALIGN:"blue",APPROACH:"amber",GRAB:"amber",DONE:"green",IDLE:"green"}[s]||"green");
+});
+
+socket.on("vision_update", d => {
+  const found = d.found;
+  const badge = document.getElementById("detectBadge");
+  const txt   = document.getElementById("detectTxt");
+  badge.className = "dbadge " + (found ? "found" : "notfound");
+  txt.textContent = found
+    ? `Detected  ${d.centroid ? `(${d.centroid[0]},${d.centroid[1]})` : ""}`
+    : "No Object";
+  if (d.err_x !== undefined) document.getElementById("mErrX").textContent = (d.err_x >= 0 ? "+" : "") + d.err_x;
+  if (d.err_y !== undefined) document.getElementById("mErrY").textContent = (d.err_y >= 0 ? "+" : "") + d.err_y;
+  document.getElementById("dVis").className = "dot " + (found ? "on" : "amber");
+});
+
+socket.on("log", e => log(e.msg, e.level));
+socket.on("mode_change", d => applyMode(d.mode));
+socket.on("vs_update", d => {
+  const row      = document.getElementById("vsRow");
+  const piState  = document.getElementById("vsPiState");
+  const lastCmd  = document.getElementById("vsLastCmd");
+  if (piState) {
+    piState.textContent = d.pi_state || "ALIGN";
+    piState.className   = "sbadge" + (d.pi_state === "WAITING_DONE" ? " active" : "");
+  }
+  if (lastCmd) lastCmd.textContent = d.last_cmd || "—";
+  if (row) row.style.display = "flex";
+});
+
+</script>
+
+<!-- ============================================================
+     GEMINI VOICE ASSISTANT
+     ============================================================ -->
+
+
+
+<script>
+let geminiSocket=null,geminiMessage=null,audioContext=null,micStream=null,micSource=null,processor=null,isRecording=false,nextAudioTime=0;
+let geminiCameraTimer=null,geminiCameraActive=false;
+const geminiStatus=document.getElementById("geminiVoiceStatus"),geminiDot=document.getElementById("geminiVoiceDot"),geminiInput=document.getElementById("geminiTextInput"),geminiSend=document.getElementById("geminiSendBtn"),geminiConnect=document.getElementById("geminiConnectBtn"),geminiDisconnect=document.getElementById("geminiDisconnectBtn"),geminiVoice=document.getElementById("geminiVoiceBtn"),geminiCamera=document.getElementById("geminiCameraBtn"),geminiChat=document.getElementById("chat-log");
+const geminiCamImg=document.getElementById("camImg"),geminiCamCanvas=document.createElement("canvas");
+function geminiAddMessage(type,text){const m=document.createElement("div");m.className="message "+type;m.textContent=text;geminiChat.appendChild(m);geminiChat.scrollTop=geminiChat.scrollHeight;}
+function geminiAppend(text){if(!geminiMessage){geminiMessage=document.createElement("div");geminiMessage.className="message assistant";geminiChat.appendChild(geminiMessage);}geminiMessage.textContent+=text;geminiChat.scrollTop=geminiChat.scrollHeight;}
+function geminiSetStatus(text,state=""){geminiStatus.textContent=text;geminiDot.className="voice-dot "+state;}
+function geminiConnectFn(){
+  if(geminiSocket&&geminiSocket.readyState===WebSocket.OPEN)return;
+  geminiSocket=new WebSocket(`ws://${location.hostname}:8000/ws`);
+  geminiSocket.binaryType="arraybuffer";
+  geminiSocket.onopen=()=>{geminiSetStatus("GEMINI CONNECTED","connected");geminiInput.disabled=false;geminiSend.disabled=false;geminiVoice.disabled=false;geminiCamera.disabled=false;geminiAddMessage("system","Gemini connected");log("Gemini Live connected","ok");};
+  geminiSocket.onmessage=e=>{
+    if(e.data instanceof ArrayBuffer){playGeminiAudio(e.data);return;}
+    if(typeof e.data!=="string")return;
+    try{const d=JSON.parse(e.data);if(d.type==="gemini")geminiAppend(d.text||"");else if(d.type==="turn_complete")geminiMessage=null;else if(d.type==="error"){geminiAddMessage("system","Error: "+d.error);geminiMessage=null;log("Gemini error: "+d.error,"error");}else if(d.type==="interrupted")geminiMessage=null;}catch(err){console.error("Gemini JSON error:",err);}
+  };
+  geminiSocket.onclose=()=>{stopGeminiVoice();stopGeminiCamera();geminiSetStatus("GEMINI OFFLINE");geminiInput.disabled=true;geminiSend.disabled=true;geminiVoice.disabled=true;geminiCamera.disabled=true;geminiSocket=null;geminiMessage=null;log("Gemini Live disconnected","warn");};
+  geminiSocket.onerror=e=>{console.error("Gemini WebSocket error:",e);geminiSetStatus("GEMINI ERROR");log("Gemini WebSocket error","error");};
+}
+function geminiDisconnectFn(){stopGeminiVoice();stopGeminiCamera();if(geminiSocket)geminiSocket.close();}
+function geminiSendText(){const text=geminiInput.value.trim();if(!text||!geminiSocket||geminiSocket.readyState!==WebSocket.OPEN)return;geminiAddMessage("user",text);geminiSocket.send(text);geminiInput.value="";geminiInput.focus();}
+async function startGeminiVoice(){
+  if(isRecording||!geminiSocket||geminiSocket.readyState!==WebSocket.OPEN)return;
+  try{audioContext=new AudioContext();await audioContext.resume();micStream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});micSource=audioContext.createMediaStreamSource(micStream);processor=audioContext.createScriptProcessor(4096,1,1);processor.onaudioprocess=e=>{if(!isRecording||!geminiSocket||geminiSocket.readyState!==WebSocket.OPEN)return;const pcm=downsampleGemini(e.inputBuffer.getChannelData(0),audioContext.sampleRate,16000);geminiSocket.send(pcm);};micSource.connect(processor);processor.connect(audioContext.destination);isRecording=true;geminiVoice.classList.add("listening");geminiVoice.textContent="🔴 LISTENING";geminiDot.className="voice-dot listening";geminiStatus.textContent="GEMINI LISTENING";}catch(e){console.error("Microphone error:",e);geminiAddMessage("system","Microphone permission denied or unavailable.");}
+}
+function stopGeminiVoice(){if(processor){processor.disconnect();processor=null;}if(micSource){micSource.disconnect();micSource=null;}if(micStream){micStream.getTracks().forEach(t=>t.stop());micStream=null;}isRecording=false;geminiVoice.classList.remove("listening");geminiVoice.textContent="🎙 VOICE";if(geminiSocket&&geminiSocket.readyState===WebSocket.OPEN)geminiSetStatus(geminiCameraActive?"GEMINI CAMERA":"GEMINI CONNECTED","connected");}
+function startGeminiCamera(){
+  if(geminiCameraActive||!geminiSocket||geminiSocket.readyState!==WebSocket.OPEN)return;
+  if(!geminiCamImg||geminiCamImg.naturalWidth===0){geminiAddMessage("system","Robot camera is not available.");log("Gemini camera: no camera feed","warn");return;}
+  geminiCameraActive=true;geminiCamera.classList.add("active");geminiCamera.textContent="⏹ CAMERA";geminiSetStatus("GEMINI CAMERA","connected");geminiCameraTimer=setInterval(sendGeminiCameraFrame,500);sendGeminiCameraFrame();log("Gemini camera mode ON","ok");
+}
+function stopGeminiCamera(){if(geminiCameraTimer){clearInterval(geminiCameraTimer);geminiCameraTimer=null;}geminiCameraActive=false;geminiCamera.classList.remove("active");geminiCamera.textContent="📷 CAMERA";if(geminiSocket&&geminiSocket.readyState===WebSocket.OPEN)geminiSetStatus("GEMINI CONNECTED","connected");log("Gemini camera mode OFF","info");}
+function sendGeminiCameraFrame(){
+  if(!geminiCameraActive||!geminiSocket||geminiSocket.readyState!==WebSocket.OPEN)return;
+  if(!geminiCamImg.complete||geminiCamImg.naturalWidth===0)return;
+  const width=640,height=Math.round(width*(geminiCamImg.naturalHeight/geminiCamImg.naturalWidth||3/4));geminiCamCanvas.width=width;geminiCamCanvas.height=height;
+  const ctx=geminiCamCanvas.getContext("2d");ctx.drawImage(geminiCamImg,0,0,width,height);
+  const data=geminiCamCanvas.toDataURL("image/jpeg",0.7).split(",")[1];geminiSocket.send(JSON.stringify({type:"image",mime_type:"image/jpeg",data}));
+}
+function downsampleGemini(buffer,inputRate,outputRate){if(inputRate===outputRate)return floatToPCM(buffer);const ratio=inputRate/outputRate,newLength=Math.round(buffer.length/ratio),result=new Int16Array(newLength);let offset=0;for(let i=0;i<newLength;i++){const next=Math.round((i+1)*ratio);let sum=0,count=0;for(let j=offset;j<next&&j<buffer.length;j++){sum+=buffer[j];count++;}result[i]=Math.max(-1,Math.min(1,count?sum/count:0))*32767;offset=next;}return result.buffer;}
+function floatToPCM(input){const out=new Int16Array(input.length);for(let i=0;i<input.length;i++)out[i]=Math.max(-1,Math.min(1,input[i]))*32767;return out.buffer;}
+function playGeminiAudio(data){if(!audioContext)audioContext=new AudioContext();const pcm=new Int16Array(data),buffer=audioContext.createBuffer(1,pcm.length,24000),channel=buffer.getChannelData(0);for(let i=0;i<pcm.length;i++)channel[i]=pcm[i]/32768;const source=audioContext.createBufferSource();source.buffer=buffer;source.connect(audioContext.destination);const start=Math.max(audioContext.currentTime,nextAudioTime);source.start(start);nextAudioTime=start+buffer.duration;}
+geminiConnect.onclick=geminiConnectFn;geminiDisconnect.onclick=geminiDisconnectFn;geminiSend.onclick=geminiSendText;geminiVoice.onclick=()=>isRecording?stopGeminiVoice():startGeminiVoice();geminiCamera.onclick=()=>geminiCameraActive?stopGeminiCamera():startGeminiCamera();geminiInput.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();geminiSendText();}});
+</script>
+
+
+<div id="trainingModal">
+  <div class="training-card">
+    <div class="training-card-head">
+      <div><div class="training-card-title">YOLO Training Review</div>
+      <div class="training-card-subtitle" id="trainingFrameInfo">Capture and validate the current frame.</div></div>
+      <button class="btn" style="width:auto;margin:0" onclick="closeTrainingReview()">✕ CLOSE</button>
+    </div>
+    <div class="training-review-layout">
+      <div>
+        <div id="trainingImageWrap"><img id="trainingImage" alt="Training frame"><canvas id="annotationCanvas"></canvas></div>
+        <div class="manual-box-state" id="manualBoxState"></div>
+        <div class="training-help">If YOLO missed an object, click and drag on the image to draw a box. Then choose its class. Existing YOLO boxes can be accepted or corrected.</div>
+      </div>
+      <div class="training-side">
+        <div class="review-question" id="trainingQuestion">Are all objects identified correctly?</div>
+        <div class="review-detections" id="reviewDetections"></div>
+        <div id="manualClassPanel" style="display:none;margin-top:8px">
+          <div style="font-size:8px;color:var(--muted);margin-bottom:4px">CLASS FOR DRAWN BOX</div>
+          <select id="manualClassSelect" class="review-class-select"></select>
+          <button class="send-btn" style="margin-top:6px" onclick="saveManualBox()">＋ SAVE BOX</button>
+        </div>
+        <div class="review-controls"><button class="send-btn" onclick="acceptAllDetections()">✓ ALL CORRECT</button></div>
+        <div class="review-controls"><button class="btn" style="margin:0" onclick="captureAndReview()">↻ NEW FRAME</button><button class="btn" style="margin:0" onclick="finishReviewBatch()">✓ FINISH BATCH</button></div>
+        <div class="batch-panel"><h4>CURRENT CORRECTION BATCH</h4><div class="batch-grid">
+          <div><b id="modalImages">0</b>images</div><div><b id="modalCorrections">0</b>corrections</div><div><b id="modalBoxes">0</b>boxes</div><div><b id="modalStatus">READY</b>status</div>
+        </div></div>
+        <div id="trainingQuestion2" class="training-help" style="display:none"></div>
+        <div id="trainNowPanel" style="display:none;margin-top:8px"><button class="send-btn" onclick="startIncrementalTraining()">▶ TRAIN NOW</button><button class="btn" style="margin-top:6px" onclick="closeTrainingReview()">SAVE FOR LATER</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<script>
+// ============================================================
+// YOLO HUMAN-IN-THE-LOOP TRAINING
+// ============================================================
+let trainingMode=false,trainingDetections=[],trainingFrame=null,drawingBox=null,drawStart=null,classMap={},trainingImageSize={w:640,h:480};
+const trainingToggle=document.getElementById("trainingModeToggle"),trainingModal=document.getElementById("trainingModal"),trainingImage=document.getElementById("trainingImage"),annotationCanvas=document.getElementById("annotationCanvas"),annotationCtx=annotationCanvas.getContext("2d");
+function setTrainingStatus(t,l=""){const e=document.getElementById("trainStatus");e.textContent=t;e.className="train-status "+l}
+function updateTrainingStats(d={}){if(d.images!==undefined)document.getElementById("trainImages").textContent=d.images;if(d.corrections!==undefined)document.getElementById("trainCorrections").textContent=d.corrections;if(d.boxes!==undefined)document.getElementById("trainBoxes").textContent=d.boxes;document.getElementById("modalImages").textContent=d.images??document.getElementById("trainImages").textContent;document.getElementById("modalCorrections").textContent=d.corrections??document.getElementById("trainCorrections").textContent;document.getElementById("modalBoxes").textContent=d.boxes??document.getElementById("trainBoxes").textContent;if(d.status)document.getElementById("modalStatus").textContent=d.status.toUpperCase()}
+async function loadTrainingClasses(){const r=await fetch("/api/training/classes"),d=await r.json();if(!d.ok)throw new Error(d.error||"classes unavailable");classMap=d.classes||{};const s=document.getElementById("manualClassSelect");s.innerHTML="";Object.entries(classMap).forEach(([id,n])=>{const o=document.createElement("option");o.value=id;o.textContent=`${n} (#${id})`;s.appendChild(o)});renderTrainingDetections()}
+async function refreshTrainingBatch(){try{const r=await fetch("/api/training/status"),d=await r.json();updateTrainingStats(d);setTrainingStatus(d.enabled?"Training mode is ON.":"Training mode is OFF.",d.enabled?"ok":"")}catch(e){setTrainingStatus("Training status unavailable.","error")}}
+async function toggleTrainingMode(on){try{const r=await fetch("/api/training/mode",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:on})}),d=await r.json();if(!d.ok)throw new Error(d.error||"failed");trainingMode=on;if(on){await loadTrainingClasses();await refreshTrainingBatch();setTrainingStatus("Training mode ON — YOLO validation is active.","ok");log("YOLO Training Mode → ON","ok")}else{closeTrainingReview();setTrainingStatus("Training mode OFF.");log("YOLO Training Mode → OFF","info")}}catch(e){trainingToggle.checked=!on;trainingMode=!on;setTrainingStatus("Could not change training mode: "+e.message,"error");log("Training mode error: "+e.message,"error")}}
+function resizeAnnotationCanvas(){if(!trainingImage.naturalWidth)return;const r=trainingImage.getBoundingClientRect();annotationCanvas.width=Math.max(1,Math.round(r.width));annotationCanvas.height=Math.max(1,Math.round(r.height));redrawAnnotationCanvas()}
+function imagePointFromEvent(e){const r=annotationCanvas.getBoundingClientRect(),sx=trainingImageSize.w/r.width,sy=trainingImageSize.h/r.height;return{x:Math.max(0,Math.min(trainingImageSize.w,(e.clientX-r.left)*sx)),y:Math.max(0,Math.min(trainingImageSize.h,(e.clientY-r.top)*sy))}}
+function redrawAnnotationCanvas(){if(!annotationCanvas.width)return;annotationCtx.clearRect(0,0,annotationCanvas.width,annotationCanvas.height);const sx=annotationCanvas.width/trainingImageSize.w,sy=annotationCanvas.height/trainingImageSize.h;trainingDetections.forEach(d=>{const x=d.x1*sx,y=d.y1*sy,w=(d.x2-d.x1)*sx,h=(d.y2-d.y1)*sy;annotationCtx.strokeStyle=d.corrected?"#00e5a0":"#38b6ff";annotationCtx.lineWidth=2;annotationCtx.strokeRect(x,y,w,h);const label=`${classMap[d.class_id]||"unknown"} #${d.class_id} ${(d.confidence*100).toFixed(0)}%`;annotationCtx.font="11px monospace";const tw=annotationCtx.measureText(label).width+8;annotationCtx.fillStyle="rgba(0,0,0,.72)";annotationCtx.fillRect(x,Math.max(0,y-17),tw,17);annotationCtx.fillStyle=d.corrected?"#00e5a0":"#38b6ff";annotationCtx.fillText(label,x+4,Math.max(12,y-5))});if(drawingBox){const x=drawingBox.x1*sx,y=drawingBox.y1*sy,w=(drawingBox.x2-drawingBox.x1)*sx,h=(drawingBox.y2-drawingBox.y1)*sy;annotationCtx.strokeStyle="#ffb020";annotationCtx.setLineDash([6,4]);annotationCtx.strokeRect(x,y,w,h);annotationCtx.setLineDash([])}}
+annotationCanvas.addEventListener("pointerdown",e=>{if(!trainingModal.classList.contains("show"))return;drawStart=imagePointFromEvent(e);annotationCanvas.setPointerCapture(e.pointerId)});
+annotationCanvas.addEventListener("pointermove",e=>{if(!drawStart)return;const p=imagePointFromEvent(e);drawingBox={x1:Math.min(drawStart.x,p.x),y1:Math.min(drawStart.y,p.y),x2:Math.max(drawStart.x,p.x),y2:Math.max(drawStart.y,p.y)};redrawAnnotationCanvas()});
+annotationCanvas.addEventListener("pointerup",e=>{if(!drawStart)return;const p=imagePointFromEvent(e);drawingBox={x1:Math.min(drawStart.x,p.x),y1:Math.min(drawStart.y,p.y),x2:Math.max(drawStart.x,p.x),y2:Math.max(drawStart.y,p.y)};drawStart=null;if(drawingBox.x2-drawingBox.x1<8||drawingBox.y2-drawingBox.y1<8){drawingBox=null;redrawAnnotationCanvas();return}document.getElementById("manualClassPanel").style.display="block";document.getElementById("manualBoxState").textContent="Box drawn — choose the correct class and save it.";redrawAnnotationCanvas()});
+trainingImage.addEventListener("load",resizeAnnotationCanvas);window.addEventListener("resize",resizeAnnotationCanvas);
+async function openTrainingReview(){if(!trainingMode){trainingToggle.checked=true;await toggleTrainingMode(true)}await captureAndReview()}
+async function captureAndReview(){try{const r=await fetch("/api/training/capture"),d=await r.json();if(!d.ok)throw new Error(d.error||"capture failed");trainingFrame=d;trainingDetections=d.detections||[];trainingImageSize={w:d.width,h:d.height};trainingImage.src=d.image_url+"?t="+Date.now();document.getElementById("trainingFrameInfo").textContent=`${d.width}×${d.height} — ${trainingDetections.length} YOLO detection(s)`;document.getElementById("manualBoxState").textContent="";document.getElementById("manualClassPanel").style.display="none";document.getElementById("trainingQuestion").textContent=trainingDetections.length?"Are all the objects identified correctly?":"YOLO did not identify any objects. Draw the missing object bounding box.";document.getElementById("trainingQuestion2").style.display="none";document.getElementById("trainNowPanel").style.display="none";drawingBox=null;renderTrainingDetections();trainingModal.classList.add("show");setTimeout(resizeAnnotationCanvas,50)}catch(e){setTrainingStatus("Capture failed: "+e.message,"error");log("Training capture error: "+e.message,"error")}}
+function renderTrainingDetections(){const w=document.getElementById("reviewDetections");w.innerHTML="";trainingDetections.forEach((d,i)=>{const item=document.createElement("div");item.className="review-item";const options=Object.entries(classMap).map(([id,n])=>`<option value="${id}" ${String(id)===String(d.class_id)?"selected":""}>${n} (#${id})</option>`).join("");item.innerHTML=`<div class="review-item-head"><span class="review-item-title">OBJECT ${i+1}: ${classMap[d.class_id]||"UNKNOWN"} #${d.class_id}</span><span class="review-item-conf">${(d.confidence*100).toFixed(1)}%</span></div><select id="detClass${i}">${options}</select><div class="review-item-actions"><button class="accept" onclick="acceptDetection(${i})">✓ CORRECT</button><button class="wrong" onclick="correctDetection(${i})">↻ WRONG → SAVE</button></div>`;w.appendChild(item)});redrawAnnotationCanvas()}
+function acceptDetection(i){trainingDetections[i].corrected=true;trainingDetections[i].verified=true;renderTrainingDetections();log(`YOLO detection ${i+1} accepted`,"ok")}
+function correctDetection(i){const s=document.getElementById(`detClass${i}`);trainingDetections[i].class_id=parseInt(s.value,10);trainingDetections[i].corrected=true;trainingDetections[i].verified=true;renderTrainingDetections();log(`YOLO detection ${i+1} corrected → ${classMap[trainingDetections[i].class_id]} (#${trainingDetections[i].class_id})`,"warn")}
+function acceptAllDetections(){trainingDetections.forEach((d,i)=>{const s=document.getElementById(`detClass${i}`);if(s)d.class_id=parseInt(s.value,10);d.corrected=true;d.verified=true});renderTrainingDetections();saveCurrentReview()}
+function saveManualBox(){if(!drawingBox)return;const cls=parseInt(document.getElementById("manualClassSelect").value,10);trainingDetections.push({x1:drawingBox.x1,y1:drawingBox.y1,x2:drawingBox.x2,y2:drawingBox.y2,class_id:cls,confidence:1,corrected:true,verified:true,manual:true});drawingBox=null;document.getElementById("manualClassPanel").style.display="none";document.getElementById("manualBoxState").textContent="Manual box added.";renderTrainingDetections();log(`Manual box added → ${classMap[cls]} (#${cls})`,"ok")}
+async function saveCurrentReview(){if(!trainingFrame)return;const unverified=trainingDetections.filter(d=>!d.verified);if(unverified.length){document.getElementById("trainingQuestion2").style.display="block";document.getElementById("trainingQuestion2").textContent="Review each detection and correct any class mapping that is wrong before saving.";return}try{const r=await fetch("/api/training/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image_id:trainingFrame.image_id,detections:trainingDetections,width:trainingFrame.width,height:trainingFrame.height})}),d=await r.json();if(!d.ok)throw new Error(d.error||"save failed");updateTrainingStats(d);document.getElementById("trainingQuestion2").style.display="block";document.getElementById("trainingQuestion2").textContent="Correction saved. Keep collecting samples or choose TRAIN NOW when your batch is ready.";document.getElementById("trainNowPanel").style.display="block";log(`Training sample saved (${d.boxes} boxes)`,"ok")}catch(e){setTrainingStatus("Could not save correction: "+e.message,"error");log("Training save error: "+e.message,"error")}}
+function finishReviewBatch(){document.getElementById("trainNowPanel").style.display="block";document.getElementById("trainingQuestion2").style.display="block";document.getElementById("trainingQuestion2").textContent="Batch review complete. Train now, or close and keep the saved corrections for later."}
+function closeTrainingReview(){trainingModal.classList.remove("show");drawingBox=null;drawStart=null}
+async function startIncrementalTraining(){document.getElementById("trainNowPanel").style.display="none";setTrainingStatus("Training started in the background. Current weights remain untouched.","warn");try{const r=await fetch("/api/training/train",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({epochs:20})}),d=await r.json();if(!d.ok)throw new Error(d.error||"training failed");log("Incremental YOLO training started","ok")}catch(e){setTrainingStatus("Could not start training: "+e.message,"error");log("Training start error: "+e.message,"error")}}
+socket.on("training_status",d=>{updateTrainingStats(d);if(d.status==="completed"){setTrainingStatus(d.message||"Training completed.","ok");log("Incremental YOLO training completed","ok")}else if(d.status==="error"){setTrainingStatus(d.message||"Training failed.","error");log("Incremental YOLO training failed","error")}else if(d.status==="training"){setTrainingStatus(d.message||"Training is running.","warn")}});
+refreshTrainingBatch();
+</script>
+</body>
+</html>

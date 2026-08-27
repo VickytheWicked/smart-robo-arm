@@ -106,6 +106,8 @@ vs = {
     "last_cmd_time": 0.0,
     "centered_at":   0.0,
 }
+
+
 vs_lock = threading.Lock()
 
 # Rolling ESP32 log for DONE/GRAB detection by VS logic
@@ -156,6 +158,8 @@ def run_yolo_on_frame(frame):
                                "class_id":int(b.cls[0].item()),
                                "confidence":float(b.conf[0].item())})
     return detections
+
+
 
 def set_training_status(status,message):
     with training_lock:
@@ -379,6 +383,7 @@ def camera_thread():
         # result = detect_red_object(frame)      #for coordinate of red
         result = detect_green_object(frame)      #for coordinate of red
 
+        
        
         annotated = result["annotated"]              #for marking and design
 
