@@ -1,4 +1,4 @@
-path: /home/vansh/Work/smart-robo-arm/robot_arm_training
+path: /home/vansh/smart-robo-arm/robot_arm_training
 
 train: train/images
 val: valid/images

@@ -322,10 +322,19 @@ def start_training_job(epochs=20):
     threading.Thread(target=worker,daemon=True).start()
 
 
-def decide_command(err_x, err_y, area):
+PICKUP_AREA = {
+    "eraser": 105000,
+    "pen": 7000,
+    "marker": 6000,
+    "glue": 5000,
+    "pencil": 6500
+}
+
+
+def decide_command(err_x, err_y, area,class_name):
     in_x = abs(err_x) <= DEAD_ZONE_X        #to avoid jittering, we define a dead zone for x and y axis. If the error is within the dead zone, we consider it centered.
     in_y = abs(err_y) <= DEAD_ZONE_Y        #to avoid jittering, we define a dead zone for x and y axis. If the error is within the dead zone, we consider it centered.
-    in_area = area > 105000  # Example threshold for object size
+    in_area = area > PICKUP_AREA[class_name]  # Example threshold for object size
     in_area1=area>80000 and area<=100000
     in_area2=area>100000 and area<=105000
     speed = "4"
@@ -650,11 +659,7 @@ def camera_thread():
 
                             current_area = result_for_vs["area"]
 
-                            cmd = decide_command(
-                                current_err_x,
-                                current_err_y,
-                                current_area
-                            )
+                            cmd = decide_command(current_err_x,current_err_y,current_area,result["class_name"])
 
                             if cmd == "CATCH":
                                 vs["pi_state"] = "TO_CATCH"

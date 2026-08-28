@@ -3,7 +3,7 @@ import base64
 import json
 import logging
 import audioop
-from gemini_live import GeminiLive
+from old_version.gemini_live.gemini_live import GeminiLive
 
 logger = logging.getLogger(__name__)
 
