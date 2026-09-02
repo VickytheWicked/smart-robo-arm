@@ -5,3 +5,7 @@ websockets
 python-dotenv
 python-multipart
 twilio
+flask
+flask-socketio
+ultralytics
+opencv-python

@@ -35,7 +35,7 @@ except Exception:
 SERIAL_PORT  = "/dev/ttyACM0"
 BAUD_RATE    = 115200
 HOST         = "0.0.0.0"
-PORT         = 3000
+PORT         = 4000
 
 
 
@@ -56,7 +56,7 @@ CMD_INTERVAL  = 0.08  # seconds between commands
 CENTERED_HOLD = 0.1   # seconds to wait after CENTERED before re-evaluating
 VS_TIMEOUT    = 15000.0  # seconds before auto-reset if grab never completes
 kp_x=0.08               # Porportional gain constant(Used for P-control)
-kp_y=0.08               # Porportional gain constant(Used for P-control) 
+kp_y=0.09               # Porportional gain constant(Used for P-control) 
 
 
 # Servo calibration — mirrors all_servo[] in scripted/main.cpp
@@ -122,7 +122,7 @@ latest_yolo_result = None
 
 # Allow the physical arm a short time to respond before processing the next
 # control decision. This is intentionally separate from camera/YOLO FPS.
-VS_SETTLE_TIME = 0.8
+VS_SETTLE_TIME = 0.9
 
 # Rolling ESP32 log for DONE/GRAB detection by VS logic
 esp_log_lines = []
@@ -327,13 +327,15 @@ def start_training_job(epochs=20):
 
 
 PICKUP = {
-    "eraser": {"area":90000,"width":100},
-    "pen": {"area":85000,"width":50},
+    "eraser": {"area":95000,"width":100},
+    "pen": {"area":95000,"width":50},
     "marker": {"area":6000,"width":40},
     "glue": {"area":5000,"width":30},
     "pencil": {"area":120000,"width":45}
 }
-MAX_STEP=5  # Maximum movement step size for servo commands
+MAX_STEP_x=5  # Maximum movement step size for servo commands
+MAX_STEP_y=5  # Maximum movement step size for servo commands
+
 
 def decide_command(err_x, err_y,area,class_name):
     in_x = abs(err_x) <= DEAD_ZONE_X        #to avoid jittering, we define a dead zone for x and y axis. If the error is within the dead zone, we consider it centered.
@@ -345,8 +347,8 @@ def decide_command(err_x, err_y,area,class_name):
     movement_x=kp_x*err_x
     movement_y=kp_y*err_y
 
-    movement_x=max(-MAX_STEP,min(MAX_STEP,int(movement_x)))  # Limit the movement to a maximum of 5 units in either direction
-    movement_y=max(-MAX_STEP,min(MAX_STEP,int(movement_y)))  # Limit the movement to a maximum of 5 units in either direction
+    movement_x=max(-MAX_STEP_x,min(MAX_STEP_x,int(movement_x)))  # Limit the movement to a maximum of 5 units in either direction
+    movement_y=max(-MAX_STEP_y,min(MAX_STEP_y,int(movement_y)))  # Limit the movement to a maximum of 5 units in either direction
 
     # Slow down as the object gets larger / closer.
     # if area > 80000:
@@ -357,7 +359,7 @@ def decide_command(err_x, err_y,area,class_name):
     if in_area and in_x and in_y and in_area:
         return "CENTERED:5\nCENTERED:5\nCENTERED:5\nCENTERED:5\nCENTERED:5\nCATCH"
     elif in_x and in_y:
-        return "CENTERED:"+str(MAX_STEP)
+        return "CENTERED:"+str(MAX_STEP_y)
     elif not in_x:
         return "RIGHT:"+str(movement_x) if err_x > 0 else "LEFT:"+str(-movement_x)
     elif not in_y:
@@ -475,7 +477,7 @@ def camera_thread():
         if cap is None or not cap.isOpened():
             if cap is not None:
                 cap.release()
-            cap = cv2.VideoCapture(0)
+            #cap = cv2.VideoCapture(1)
             cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             cap.set(cv2.CAP_PROP_FPS, 30)

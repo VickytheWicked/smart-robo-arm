@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from gemini_live_v2 import GeminiLive
-from twilio_handler import TwilioHandler
+# from twilio_handler import TwilioHandler
 
 
 #Tool calling config
