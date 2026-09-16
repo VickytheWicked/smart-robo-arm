@@ -36,7 +36,7 @@ except Exception:
 SERIAL_PORT  = "/dev/ttyACM0"
 BAUD_RATE    = 115200
 HOST         = "0.0.0.0"
-PORT         = 4000
+PORT         = 3000
 
 
 
@@ -481,7 +481,7 @@ def camera_thread():
         if cap is None or not cap.isOpened():
             if cap is not None:
                 cap.release()
-            cap = cv2.VideoCapture(1)
+            cap = cv2.VideoCapture(0)
             cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             cap.set(cv2.CAP_PROP_FPS, 30)

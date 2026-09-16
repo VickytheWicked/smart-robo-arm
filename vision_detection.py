@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 import argparse
 import time
+import re
 
 # ── HSV thresholds — tuned for red eraser, indoor lighting ──────────────
 # Red wraps around hue=0/180, so two ranges are needed
@@ -448,7 +449,7 @@ def detect_yellow_object(frame: np.ndarray) -> dict:
     # Labels
     cv2.putText(
         ann,
-        f"GREEN ({cx},{cy})",
+        f"YELLOW ({cx},{cy})",
         (x, max(y - 26, 20)),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.5,
@@ -666,6 +667,136 @@ def detect_white_object(frame: np.ndarray) -> dict:
     result["annotated"] = ann
 
     return result
+
+
+SUPPORTED_COLORS = ["red", "green", "yellow", "blue", "white"]
+
+
+def detect_blue_object(frame: np.ndarray) -> dict:
+    """
+    Detect the largest blue object in a BGR frame (e.g. blue lego brick).
+
+    Returns:
+        found    : bool
+        centroid : (cx, cy) or None
+        bbox     : (x, y, w, h) or None
+        area     : float (px²)
+        mask     : binary mask
+        annotated: frame with drawings overlaid
+    """
+    result = dict(
+        found=False,
+        centroid=None,
+        bbox=None,
+        area=0.0,
+        mask=None,
+        annotated=frame.copy()
+    )
+
+    blurred = cv2.GaussianBlur(frame, BLUR_KERNEL, 0)
+    hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+
+    # Blue HSV range
+    BLUE_LOWER = np.array([100, 100, 50])
+    BLUE_UPPER = np.array([130, 255, 255])
+
+    mask = cv2.inRange(hsv, BLUE_LOWER, BLUE_UPPER)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, MORPH_KERNEL)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_DILATE, MORPH_KERNEL)
+    result["mask"] = mask
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return result
+
+    largest = max(contours, key=cv2.contourArea)
+    area = cv2.contourArea(largest)
+    if area < MIN_CONTOUR_AREA:
+        return result
+
+    M = cv2.moments(largest)
+    if M["m00"] == 0:
+        return result
+
+    cx = int(M["m10"] / M["m00"])
+    cy = int(M["m01"] / M["m00"])
+    x, y, w, h = cv2.boundingRect(largest)
+
+    result.update(
+        found=True,
+        centroid=(cx, cy),
+        bbox=(x, y, w, h),
+        area=area
+    )
+
+    ann = frame.copy()
+    fh, fw = frame.shape[:2]
+    fcx = fw // 2
+    fcy = fh // 2
+
+    cv2.rectangle(ann, (x, y), (x + w, y + h), (255, 120, 0), 2)
+    cv2.drawContours(ann, [largest], -1, (255, 200, 0), 1)
+    cv2.circle(ann, (cx, cy), 7, (255, 120, 0), -1)
+    cv2.circle(ann, (cx, cy), 9, (255, 255, 255), 1)
+    cv2.line(ann, (fcx, fcy), (cx, cy), (0, 200, 255), 1)
+
+    err_x = cx - fcx
+    err_y = cy - fcy
+
+    cv2.putText(ann, f"BLUE ({cx},{cy})", (x, max(y - 26, 20)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 150, 0), 1)
+    cv2.putText(ann, f"area={int(area)}px2", (x, max(y - 10, 35)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 200, 0), 1)
+    cv2.putText(ann, f"ErrX:{err_x:+d} ErrY:{err_y:+d}", (8, fh - 12),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 200, 100), 2)
+
+    result["annotated"] = ann
+    return result
+
+
+def detect_color_object(frame: np.ndarray, color: str) -> dict:
+    """
+    Unified dispatcher to detect an object of the requested color.
+    Supports: 'red', 'green', 'yellow', 'blue', 'white'.
+    """
+    if not color:
+        return dict(found=False, centroid=None, bbox=None, area=0.0, mask=None, annotated=frame.copy(), color=None)
+
+    col = str(color).lower().strip()
+    if col == "red":
+        res = detect_red_object(frame)
+    elif col == "green":
+        res = detect_green_object(frame)
+    elif col == "yellow":
+        res = detect_yellow_object(frame)
+    elif col == "blue":
+        res = detect_blue_object(frame)
+    elif col == "white":
+        res = detect_white_object(frame)
+    else:
+        res = dict(found=False, centroid=None, bbox=None, area=0.0, mask=None, annotated=frame.copy())
+
+    res["color"] = col
+    return res
+
+
+def extract_color_from_string(text: str):
+    """
+    Inspect a phrase (e.g. 'red lego brick', 'pick up the yellow block', 'green piece')
+    and return the matched color name, or None if no supported color is found.
+    """
+    if not text:
+        return None
+    cleaned = re.sub(r"[^a-zA-Z\s]", " ", str(text).lower())
+    words = cleaned.split()
+    for col in SUPPORTED_COLORS:
+        if col in words:
+            return col
+    for col in SUPPORTED_COLORS:
+        if col in cleaned:
+            return col
+    return None
+
     
 def compute_pixel_error(centroid: tuple, frame_shape: tuple):
     """

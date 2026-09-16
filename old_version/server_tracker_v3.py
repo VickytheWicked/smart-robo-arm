@@ -18,7 +18,7 @@ from google.genai import types
 MODEL = "gemini-robotics-er-2-preview"
 TARGET = "lego minifigure"
 
-CAMERA_INDEX = 1
+CAMERA_INDEX = 0
 
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
@@ -1031,9 +1031,7 @@ def camera_thread():
     global tracker_bad_frame_count
     global tracker_last_gemini_version
 
-    cap = cv2.VideoCapture(
-        CAMERA_INDEX
-    )
+    cap = cv2.VideoCapture('/dev/video0', cv2.CAP_V4L2)
 
     cap.set(
         cv2.CAP_PROP_FRAME_WIDTH,
@@ -2489,6 +2487,6 @@ if __name__ == "__main__":
 
     app.run(
         host="0.0.0.0",
-        port=5000,
+        port=8000,
         threaded=True
     )

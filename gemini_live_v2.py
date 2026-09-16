@@ -4,7 +4,7 @@ import logging
 import traceback
 
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 
 from memory.memory_manager import MemoryManager
 from memory.memory_extractor import MemoryExtractor
@@ -32,12 +32,11 @@ class GeminiLive:
         # PERSISTENT MEMORY
         # =====================================================
 
-        self.memory = MemoryManager()
-        self.memory_extractor = (MemoryExtractor(api_key))
+        # self.memory = MemoryManager()
+        # self.memory_extractor = (MemoryExtractor(api_key))
         self.session_id = None
         self.session_messages = []
-
-        # logger.info(f"{self.memory.print_memories()}")
+        self.resumption_handle = None
 
     # =========================================================
     # SYSTEM PROMPT
@@ -45,13 +44,36 @@ class GeminiLive:
 
     def build_system_prompt(self):
 
-        memory_context = (self.memory.get_memory_context())
+        # memory_context = (self.memory.get_memory_context())
+
+        # return f"""
+        # Your name is Lucy. You are the AI brain of a robotic assistant. The user's name is Vansh. Vansh is a computer science student and 
+        # robotics enthusiast who is currently building a robotic arm. You are having a natural voice conversation with him. For technical questions, be clear and practical.
+        # For casual conversation, be natural and friendly. Keep responses concise unless Vansh asks for a detailed explanation. Your responses will be spoken aloud. 
+        # You are connected to a physical robotic arm.
+
+        # You have access to robot control tools.
+
+        # When the user explicitly asks you to control
+        # the robot, use the appropriate robot tool.
+
+        # Never claim that the robot moved unless the
+        # corresponding tool actually reports success.
+
+        # If a robot action fails, explain that it failed.
+
+        # The stop_tracking, stop_pick, and reset_arm tools should be treated as high-priority safety commands whenever Vansh asks to stop tracking, halt, or cancel.
+        
+        # If you don't know something, be honest. You have persistent memory from previous conversations. Use the persistent memory naturally when relevant. Do not mention the 
+        # internal memory system unless Vansh specifically asks about it.
+        # Persistent memory: 
+        #     {memory_context}
+        # """
 
         return f"""
         Your name is Lucy. You are the AI brain of a robotic assistant. The user's name is Vansh. Vansh is a computer science student and 
         robotics enthusiast who is currently building a robotic arm. You are having a natural voice conversation with him. For technical questions, be clear and practical.
         For casual conversation, be natural and friendly. Keep responses concise unless Vansh asks for a detailed explanation. Your responses will be spoken aloud. 
-        When Vansh seems discouraged, stressed, or overwhelmed, be warm, patient, and empathetic. Listen without judgment and help him process what he is feeling.
         You are connected to a physical robotic arm.
 
         You have access to robot control tools.
@@ -59,18 +81,20 @@ class GeminiLive:
         When the user explicitly asks you to control
         the robot, use the appropriate robot tool.
 
+        When the user asks to pick, grab, or fetch an object of a specific color (such as a red lego brick, green block, yellow lego, blue brick, or white object),
+        ALWAYS use the pick_color_object tool. This offloads the tracking task directly to the local high-speed computer vision detection system.
+        For general non-colored objects (e.g. pen, scissors, watch), use pick_object.
+
         Never claim that the robot moved unless the
         corresponding tool actually reports success.
 
         If a robot action fails, explain that it failed.
 
-        The stop_arm tool should be treated as a high-priority safety command.
+        The stop_tracking, stop_pick, and reset_arm tools should be treated as high-priority safety commands whenever Vansh asks to stop tracking, halt, or cancel.
         
-        If you don't know something, be honest. You have persistent memory from previous conversations. Use the persistent memory naturally when relevant. Do not mention the 
-        internal memory system unless Vansh specifically asks about it.
-        Persistent memory: 
-            {memory_context}
+        If you don't know something, be honest. 
         """
+
 
     # =========================================================
     # EXTRACT LONG-TERM MEMORIES
@@ -95,7 +119,8 @@ class GeminiLive:
         logger.info("🧠 Extracting long-term memories...")
 
         try:
-            memories = await (self.memory_extractor.extract(conversation))
+            # memories = await (self.memory_extractor.extract(conversation))
+            memories=None
             if not memories:
                 logger.info("🧠 No new memories found.")
                 return
@@ -129,67 +154,17 @@ class GeminiLive:
     # START GEMINI LIVE SESSION
     # =========================================================
 
-    async def start_session(
+    async def _connect_and_stream(
         self,
+        config,
         audio_input_queue,
         video_input_queue,
         text_input_queue,
         audio_output_callback,
         audio_interrupt_callback=None
     ):
-
-        # =====================================================
-        # CREATE NEW MEMORY SESSION
-        # =====================================================
-
-        self.session_id = (
-            self.memory.start_session()
-        )
-
-        self.session_messages = []
-
-        # =====================================================
-        # SYSTEM PROMPT
-        # =====================================================
-
-        system_prompt = (
-            self.build_system_prompt()
-        )
-
-        # =====================================================
-        # GEMINI CONFIG
-        # =====================================================
-
-        config = types.LiveConnectConfig(
-
-            response_modalities=[types.Modality.AUDIO],
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=
-                        types.PrebuiltVoiceConfig(
-                            voice_name="Leda"
-                        )
-                )
-            ),
-
-            system_instruction=types.Content(
-                parts=[
-                    types.Part(text=system_prompt)
-                ]
-            ),
-
-            input_audio_transcription=types.AudioTranscriptionConfig(),
-            output_audio_transcription=types.AudioTranscriptionConfig(),
-            realtime_input_config=types.RealtimeInputConfig(
-                    turn_coverage="TURN_INCLUDES_ONLY_ACTIVITY"
-                ),
-            tools=self.tools,
-        )
-
-        logger.info(
-            f"Connecting to Gemini Live "
-            f"with model={self.model}"
-        )
+        tool_in_flight = asyncio.Event()
+        tool_in_flight.set()
 
         try:
             async with self.client.aio.live.connect(
@@ -219,6 +194,10 @@ class GeminiLive:
 
                             if chunk is None:
                                 break
+
+                            await tool_in_flight.wait()
+                            if not tool_in_flight.is_set():
+                                continue
 
                             await session.send_realtime_input(
 
@@ -263,6 +242,10 @@ class GeminiLive:
                             if chunk is None:
 
                                 break
+
+                            await tool_in_flight.wait()
+                            if not tool_in_flight.is_set():
+                                continue
 
                             logger.debug(
                                 "Sending video frame "
@@ -310,6 +293,8 @@ class GeminiLive:
 
                                 break
 
+                            await tool_in_flight.wait()
+
                             logger.info(
                                 f"Sending text to Gemini: {text}"
                             )
@@ -318,14 +303,14 @@ class GeminiLive:
                             # SAVE TEXT MESSAGE
                             # -------------------------------------
 
-                            self.memory.save_message(
+                            # self.memory.save_message(
 
-                                self.session_id,
+                            #     self.session_id,
 
-                                "user",
+                            #     "user",
 
-                                text
-                            )
+                            #     text
+                            # )
 
                             self.session_messages.append(
                                 (
@@ -397,11 +382,21 @@ class GeminiLive:
                                     response
                                     .session_resumption_update
                                 ):
+                                    resump = (
+                                        response
+                                        .session_resumption_update
+                                    )
 
                                     logger.info(
                                         "Session resumption update: "
-                                        f"{response.session_resumption_update}"
+                                        f"{resump}"
                                     )
+
+                                    if getattr(resump, "new_handle", None):
+                                        self.resumption_handle = resump.new_handle
+                                        logger.info(
+                                            f"Updated resumption handle: {self.resumption_handle}"
+                                        )
 
                                 server_content = (
                                     response.server_content
@@ -486,14 +481,14 @@ class GeminiLive:
                                         )
 
                                         # Save to SQLite
-                                        self.memory.save_message(
+                                        # self.memory.save_message(
 
-                                            self.session_id,
+                                        #     self.session_id,
 
-                                            "user",
+                                        #     "user",
 
-                                            user_text
-                                        )
+                                        #     user_text
+                                        # )
 
                                         # Save to current session
                                         self.session_messages.append(
@@ -538,14 +533,14 @@ class GeminiLive:
                                         )
 
                                         # Save to SQLite
-                                        self.memory.save_message(
+                                        # self.memory.save_message(
 
-                                            self.session_id,
+                                        #     self.session_id,
 
-                                            "assistant",
+                                        #     "assistant",
 
-                                            gemini_text
-                                        )
+                                        #     gemini_text
+                                        # )
 
                                         # Save to current session
                                         self.session_messages.append(
@@ -627,122 +622,162 @@ class GeminiLive:
 
                                 if tool_call:
 
-                                    function_responses = []
+                                    tool_in_flight.clear()
+                                    logger.info(
+                                        "Tool call received from Gemini; "
+                                        "paused realtime audio/video streaming."
+                                    )
 
-                                    for fc in (
-                                        tool_call.function_calls
-                                    ):
+                                    try:
+                                        function_responses = []
 
-                                        func_name = (
-                                            fc.name
-                                        )
-
-                                        args = (
-                                            fc.args or {}
-                                        )
-
-                                        if (
-                                            func_name
-                                            not in
-                                            self.tool_mapping
+                                        for fc in (
+                                            tool_call.function_calls
                                         ):
 
-                                            logger.warning(
-                                                f"Unknown tool: "
-                                                f"{func_name}"
+                                            func_name = (
+                                                fc.name
                                             )
 
-                                            continue
-
-                                        try:
-
-                                            tool_func = (
-                                                self.tool_mapping[
-                                                    func_name
-                                                ]
+                                            args = (
+                                                fc.args or {}
                                             )
 
                                             if (
-                                                inspect
-                                                .iscoroutinefunction(
-                                                    tool_func
-                                                )
+                                                func_name
+                                                not in
+                                                self.tool_mapping
                                             ):
 
-                                                result = (
-                                                    await tool_func(
-                                                        **args
+                                                logger.warning(
+                                                    f"Unknown tool: "
+                                                    f"{func_name}"
+                                                )
+
+                                                continue
+
+                                            try:
+
+                                                tool_func = (
+                                                    self.tool_mapping[
+                                                        func_name
+                                                    ]
+                                                )
+
+                                                if (
+                                                    inspect
+                                                    .iscoroutinefunction(
+                                                        tool_func
                                                     )
-                                                )
+                                                ):
 
-                                            else:
-
-                                                loop = (
-                                                    asyncio
-                                                    .get_running_loop()
-                                                )
-
-                                                result = (
-                                                    await loop
-                                                    .run_in_executor(
-                                                        None,
-                                                        lambda:
-                                                        tool_func(
+                                                    result = (
+                                                        await tool_func(
                                                             **args
                                                         )
                                                     )
+
+                                                else:
+
+                                                    loop = (
+                                                        asyncio
+                                                        .get_running_loop()
+                                                    )
+
+                                                    result = (
+                                                        await loop
+                                                        .run_in_executor(
+                                                            None,
+                                                            lambda:
+                                                            tool_func(
+                                                                **args
+                                                            )
+                                                        )
+                                                    )
+
+                                            except Exception as e:
+
+                                                logger.error(
+                                                    f"Tool "
+                                                    f"{func_name} "
+                                                    f"failed: {e}"
                                                 )
 
-                                        except Exception as e:
+                                                result = (
+                                                    f"Error: {e}"
+                                                )
 
-                                            logger.error(
-                                                f"Tool "
-                                                f"{func_name} "
-                                                f"failed: {e}"
+                                            function_responses.append(
+
+                                                types.FunctionResponse(
+
+                                                    name=func_name,
+
+                                                    id=fc.id,
+
+                                                    response={
+                                                        "result": result
+                                                    }
+                                                )
                                             )
 
-                                            result = (
-                                                f"Error: {e}"
+                                            await event_queue.put({
+
+                                                "type":
+                                                    "tool_call",
+
+                                                "name":
+                                                    func_name,
+
+                                                "args":
+                                                    args,
+
+                                                "result":
+                                                    result
+
+                                            })
+
+                                        if function_responses:
+
+                                            logger.info(
+                                                f"Sending tool response to Gemini: {function_responses}"
                                             )
 
-                                        function_responses.append(
-
-                                            types.FunctionResponse(
-
-                                                name=func_name,
-
-                                                id=fc.id,
-
-                                                response={
-                                                    "result": result
-                                                }
+                                            await (
+                                                session
+                                                .send_tool_response(
+                                                    function_responses=
+                                                        function_responses
+                                                )
                                             )
-                                        )
 
-                                        await event_queue.put({
+                                    finally:
 
-                                            "type":
-                                                "tool_call",
+                                        drained_audio = 0
+                                        while not audio_input_queue.empty():
+                                            try:
+                                                audio_input_queue.get_nowait()
+                                                drained_audio += 1
+                                            except (asyncio.QueueEmpty, ValueError):
+                                                break
 
-                                            "name":
-                                                func_name,
+                                        drained_video = 0
+                                        while not video_input_queue.empty():
+                                            try:
+                                                video_input_queue.get_nowait()
+                                                drained_video += 1
+                                            except (asyncio.QueueEmpty, ValueError):
+                                                break
 
-                                            "args":
-                                                args,
-
-                                            "result":
-                                                result
-
-                                        })
-
-                                    if function_responses:
-
-                                        await (
-                                            session
-                                            .send_tool_response(
-                                                function_responses=
-                                                    function_responses
+                                        if drained_audio or drained_video:
+                                            logger.info(
+                                                f"Drained {drained_audio} audio chunks and "
+                                                f"{drained_video} video frames buffered during tool execution"
                                             )
+
+                                        tool_in_flight.set()
+                                        logger.info(
+                                            "Resumed realtime audio/video streaming."
                                         )
 
                         # session.receive() ended
@@ -767,15 +802,29 @@ class GeminiLive:
                             f"{traceback.format_exc()}"
                         )
 
-                        await event_queue.put({
+                        err_str = str(e)
+                        is_abort_or_closed = (
+                            "1008" in err_str
+                            or "ConnectionClosed" in type(e).__name__
+                            or "aborted" in err_str.lower()
+                        )
 
-                            "type":
-                                "error",
-
-                            "error":
-                                f"{type(e).__name__}: {e}"
-
-                        })
+                        if is_abort_or_closed:
+                            logger.warning(
+                                f"Resumable connection error in receive_loop: {e}. "
+                                f"Requesting reconnection."
+                            )
+                            await event_queue.put({
+                                "type": "reconnect_needed",
+                                "error": f"{type(e).__name__}: {e}"
+                            })
+                        else:
+                            await event_queue.put({
+                                "type":
+                                    "error",
+                                "error":
+                                    f"{type(e).__name__}: {e}"
+                            })
 
                     finally:
 
@@ -831,20 +880,6 @@ class GeminiLive:
 
                             break
 
-                        if (
-                            isinstance(
-                                event,
-                                dict
-                            )
-                            and
-                            event.get("type")
-                            == "error"
-                        ):
-
-                            yield event
-
-                            break
-
                         yield event
 
                 finally:
@@ -875,15 +910,149 @@ class GeminiLive:
         except Exception as e:
 
             logger.error(
-                f"Gemini Live session error: "
+                f"Gemini Live connection error: "
                 f"{type(e).__name__}: {e}\n"
                 f"{traceback.format_exc()}"
             )
 
             raise
 
-        finally:
+    # =========================================================
+    # START GEMINI LIVE SESSION (WITH AUTO-RESUMPTION)
+    # =========================================================
 
+    async def start_session(
+        self,
+        audio_input_queue,
+        video_input_queue,
+        text_input_queue,
+        audio_output_callback,
+        audio_interrupt_callback=None
+    ):
+        # Create new memory session
+        # self.session_id = self.memory.start_session()
+        self.session_messages = []
+        system_prompt = self.build_system_prompt()
+
+        max_retries = 3
+        retry_count = 0
+
+        try:
+            while retry_count <= max_retries:
+                session_resumption_cfg = (
+                    types.SessionResumptionConfig(handle=self.resumption_handle)
+                    if self.resumption_handle
+                    else None
+                )
+
+                config = types.LiveConnectConfig(
+                    response_modalities=[types.Modality.AUDIO],
+                    speech_config=types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name="Leda"
+                            )
+                        )
+                    ),
+                    system_instruction=types.Content(
+                        parts=[
+                            types.Part(text=system_prompt)
+                        ]
+                    ),
+                    input_audio_transcription=types.AudioTranscriptionConfig(),
+                    output_audio_transcription=types.AudioTranscriptionConfig(),
+                    realtime_input_config=types.RealtimeInputConfig(
+                        turn_coverage="TURN_INCLUDES_ONLY_ACTIVITY"
+                    ),
+                    tools=self.tools,
+                    session_resumption=session_resumption_cfg,
+                )
+
+                logger.info(
+                    f"Connecting to Gemini Live with model={self.model} "
+                    f"(resumption_handle={self.resumption_handle}, attempt={retry_count + 1})"
+                )
+
+                reconnect_needed = False
+
+                try:
+                    async for event in self._connect_and_stream(
+                        config=config,
+                        audio_input_queue=audio_input_queue,
+                        video_input_queue=video_input_queue,
+                        text_input_queue=text_input_queue,
+                        audio_output_callback=audio_output_callback,
+                        audio_interrupt_callback=audio_interrupt_callback
+                    ):
+                        if isinstance(event, dict) and event.get("type") == "reconnect_needed":
+                            reconnect_needed = True
+                            break
+
+                        yield event
+
+                except asyncio.CancelledError:
+                    logger.info("start_session cancelled by client")
+                    break
+
+                except (ValueError, TypeError) as config_err:
+                    logger.error(
+                        f"Deterministic configuration/validation error in Gemini Live: {config_err}"
+                    )
+                    yield {
+                        "type": "error",
+                        "error": f"Configuration error: {config_err}"
+                    }
+                    break
+
+                except Exception as conn_err:
+                    logger.error(
+                        f"Live session stream error: {type(conn_err).__name__}: {conn_err}\n"
+                        f"{traceback.format_exc()}"
+                    )
+                    if "session not found" in str(conn_err).lower():
+                        logger.warning(
+                            f"Previous session handle '{self.resumption_handle}' was rejected or expired. Resetting handle to connect fresh."
+                        )
+                        self.resumption_handle = None
+                    reconnect_needed = True
+
+                if reconnect_needed:
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        logger.warning(
+                            f"Live session interrupted. Transparently reconnecting (attempt {retry_count}/{max_retries}) "
+                            f"in 0.5s with resumption_handle={self.resumption_handle}..."
+                        )
+                        yield {
+                            "type": "reconnecting",
+                            "attempt": retry_count,
+                            "handle": bool(self.resumption_handle)
+                        }
+                        await asyncio.sleep(0.5)
+                    else:
+                        logger.error(
+                            f"Max reconnection attempts ({max_retries}) exceeded."
+                        )
+                        yield {
+                            "type": "error",
+                            "error": "Max reconnection attempts exceeded."
+                        }
+                        break
+                else:
+                    break
+
+        except asyncio.CancelledError:
+            logger.info("start_session task cancelled")
+
+        except Exception as e:
+            logger.error(
+                f"Gemini Live session error: "
+                f"{type(e).__name__}: {e}\n"
+                f"{traceback.format_exc()}"
+            )
+            raise
+
+        finally:
             # =====================================================
             # EXTRACT LONG-TERM MEMORIES
             # =====================================================
@@ -894,16 +1063,10 @@ class GeminiLive:
             )
 
             try:
-
-                await (
-                    self.extract_session_memories()
-                )
-
+                await self.extract_session_memories()
             except Exception as e:
-
                 logger.error(
-                    f"Failed to extract memories: "
-                    f"{e}\n"
+                    f"Failed to extract memories: {e}\n"
                     f"{traceback.format_exc()}"
                 )
 
@@ -912,29 +1075,12 @@ class GeminiLive:
             # =====================================================
 
             try:
-
-                message_count = len(
-                    self.session_messages
-                )
-
-                summary = (
-                    f"Session contained "
-                    f"{message_count} conversation "
-                    f"messages."
-                )
-
-                self.memory.end_session(
-                    self.session_id,
-                    summary
-                )
-
+                message_count = len(self.session_messages)
+                summary = f"Session contained {message_count} conversation messages."
+                self.memory.end_session(self.session_id, summary)
             except Exception as e:
-
                 logger.error(
-                    f"Failed to close memory session: "
-                    f"{e}"
+                    f"Failed to close memory session: {e}"
                 )
 
-            logger.info(
-                "Gemini Live session closed"
-            )
+            logger.info("Gemini Live session closed")

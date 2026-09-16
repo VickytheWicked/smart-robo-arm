@@ -1287,6 +1287,7 @@ function setYoloPickButton(active) {
 
 function Reset() {
   setYoloPickButton(false);
+  stopGeminiCamera();
   fetch("/api/reset", {
     method:"POST",
     headers:{"Content-Type":"application/json"},
@@ -1427,7 +1428,18 @@ socket.on("yolo_pick", d => {
 socket.on("log", e => log(e.msg, e.level));
 socket.on("mode_change", d => {
   applyMode(d.mode);
-  if (d.mode !== "visual") setYoloPickButton(false);
+  if (d.mode !== "visual") {
+    setYoloPickButton(false);
+    stopGeminiCamera();
+  }
+});
+socket.on("reset", () => {
+  setYoloPickButton(false);
+  stopGeminiCamera();
+  log("Robot reset — stopped camera streaming to Gemini", "info");
+});
+socket.on("stop_camera", () => {
+  stopGeminiCamera();
 });
 socket.on("vs_update", d => {
   const row      = document.getElementById("vsRow");
@@ -1438,7 +1450,10 @@ socket.on("vs_update", d => {
     piState.className   = "sbadge" + (d.pi_state === "WAITING_DONE" ? " active" : "");
   }
   if (lastCmd) lastCmd.textContent = d.last_cmd || "—";
-  if (row) row.style.display = "flex";
+  if (row) row.style.display = d.active ? "flex" : "none";
+  if (d.active === false && !d.target) {
+    stopGeminiCamera();
+  }
 });
 
 </script>
@@ -1450,7 +1465,7 @@ socket.on("vs_update", d => {
 
 
 <script>
-let geminiSocket=null,geminiMessage=null,audioContext=null,micStream=null,micSource=null,processor=null,isRecording=false,nextAudioTime=0;
+let geminiSocket=null,geminiMessage=null,audioContext=null,micStream=null,micSource=null,processor=null,muteGain=null,activeAudioSources=[],isRecording=false,nextAudioTime=0;
 let geminiCameraTimer=null,geminiCameraActive=false;
 const geminiStatus=document.getElementById("geminiVoiceStatus"),geminiDot=document.getElementById("geminiVoiceDot"),geminiInput=document.getElementById("geminiTextInput"),geminiSend=document.getElementById("geminiSendBtn"),geminiConnect=document.getElementById("geminiConnectBtn"),geminiDisconnect=document.getElementById("geminiDisconnectBtn"),geminiVoice=document.getElementById("geminiVoiceBtn"),geminiCamera=document.getElementById("geminiCameraBtn"),geminiChat=document.getElementById("chat-log");
 const geminiCamImg=document.getElementById("camImg"),geminiCamCanvas=document.createElement("canvas");
@@ -1465,7 +1480,18 @@ function geminiConnectFn(){
   geminiSocket.onmessage=e=>{
     if(e.data instanceof ArrayBuffer){playGeminiAudio(e.data);return;}
     if(typeof e.data!=="string")return;
-    try{const d=JSON.parse(e.data);if(d.type==="gemini")geminiAppend(d.text||"");else if(d.type==="turn_complete")geminiMessage=null;else if(d.type==="error"){geminiAddMessage("system","Error: "+d.error);geminiMessage=null;log("Gemini error: "+d.error,"error");}else if(d.type==="interrupted")geminiMessage=null;}catch(err){console.error("Gemini JSON error:",err);}
+    try{
+      const d=JSON.parse(e.data);
+      if(d.type==="gemini")geminiAppend(d.text||"");
+      else if(d.type==="turn_complete")geminiMessage=null;
+      else if(d.type==="error"){geminiAddMessage("system","Error: "+d.error);geminiMessage=null;log("Gemini error: "+d.error,"error");}
+      else if(d.type==="interrupted"){
+        geminiMessage=null;
+        nextAudioTime=0;
+        activeAudioSources.forEach(s=>{try{s.stop();}catch(_){}});
+        activeAudioSources=[];
+      }
+    }catch(err){console.error("Gemini JSON error:",err);}
   };
   geminiSocket.onclose=()=>{stopGeminiVoice();stopGeminiCamera();geminiSetStatus("GEMINI OFFLINE");geminiInput.disabled=true;geminiSend.disabled=true;geminiVoice.disabled=true;geminiCamera.disabled=true;geminiSocket=null;geminiMessage=null;log("Gemini Live disconnected","warn");};
   geminiSocket.onerror=e=>{console.error("Gemini WebSocket error:",e);geminiSetStatus("GEMINI ERROR");log("Gemini WebSocket error","error");};
@@ -1474,9 +1500,42 @@ function geminiDisconnectFn(){stopGeminiVoice();stopGeminiCamera();if(geminiSock
 function geminiSendText(){const text=geminiInput.value.trim();if(!text||!geminiSocket||geminiSocket.readyState!==WebSocket.OPEN)return;geminiAddMessage("user",text);geminiSocket.send(text);geminiInput.value="";geminiInput.focus();}
 async function startGeminiVoice(){
   if(isRecording||!geminiSocket||geminiSocket.readyState!==WebSocket.OPEN)return;
-  try{audioContext=new AudioContext();await audioContext.resume();micStream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});micSource=audioContext.createMediaStreamSource(micStream);processor=audioContext.createScriptProcessor(4096,1,1);processor.onaudioprocess=e=>{if(!isRecording||!geminiSocket||geminiSocket.readyState!==WebSocket.OPEN)return;const pcm=downsampleGemini(e.inputBuffer.getChannelData(0),audioContext.sampleRate,16000);geminiSocket.send(pcm);};micSource.connect(processor);processor.connect(audioContext.destination);isRecording=true;geminiVoice.classList.add("listening");geminiVoice.textContent="🔴 LISTENING";geminiDot.className="voice-dot listening";geminiStatus.textContent="GEMINI LISTENING";}catch(e){console.error("Microphone error:",e);geminiAddMessage("system","Microphone permission denied or unavailable.");}
+  try{
+    if(!audioContext)audioContext=new(window.AudioContext||window.webkitAudioContext)();
+    if(audioContext.state==="suspended")await audioContext.resume();
+    micStream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    micSource=audioContext.createMediaStreamSource(micStream);
+    processor=audioContext.createScriptProcessor(4096,1,1);
+    processor.onaudioprocess=e=>{
+      if(!isRecording||!geminiSocket||geminiSocket.readyState!==WebSocket.OPEN)return;
+      const pcm=downsampleGemini(e.inputBuffer.getChannelData(0),audioContext.sampleRate,16000);
+      geminiSocket.send(pcm);
+    };
+    muteGain=audioContext.createGain();
+    muteGain.gain.value=0;
+    micSource.connect(processor);
+    processor.connect(muteGain);
+    muteGain.connect(audioContext.destination);
+    isRecording=true;
+    geminiVoice.classList.add("listening");
+    geminiVoice.textContent="🔴 LISTENING";
+    geminiDot.className="voice-dot listening";
+    geminiStatus.textContent="GEMINI LISTENING";
+  }catch(e){
+    console.error("Microphone error:",e);
+    geminiAddMessage("system","Microphone permission denied or unavailable.");
+  }
 }
-function stopGeminiVoice(){if(processor){processor.disconnect();processor=null;}if(micSource){micSource.disconnect();micSource=null;}if(micStream){micStream.getTracks().forEach(t=>t.stop());micStream=null;}isRecording=false;geminiVoice.classList.remove("listening");geminiVoice.textContent="🎙 VOICE";if(geminiSocket&&geminiSocket.readyState===WebSocket.OPEN)geminiSetStatus(geminiCameraActive?"GEMINI CAMERA":"GEMINI CONNECTED","connected");}
+function stopGeminiVoice(){
+  if(processor){processor.disconnect();processor=null;}
+  if(micSource){micSource.disconnect();micSource=null;}
+  if(muteGain){muteGain.disconnect();muteGain=null;}
+  if(micStream){micStream.getTracks().forEach(t=>t.stop());micStream=null;}
+  isRecording=false;
+  geminiVoice.classList.remove("listening");
+  geminiVoice.textContent="🎙 VOICE";
+  if(geminiSocket&&geminiSocket.readyState===WebSocket.OPEN)geminiSetStatus(geminiCameraActive?"GEMINI CAMERA":"GEMINI CONNECTED","connected");
+}
 function startGeminiCamera(){
   if(geminiCameraActive||!geminiSocket||geminiSocket.readyState!==WebSocket.OPEN)return;
   if(!geminiCamImg||geminiCamImg.naturalWidth===0){geminiAddMessage("system","Robot camera is not available.");log("Gemini camera: no camera feed","warn");return;}
@@ -1492,7 +1551,21 @@ function sendGeminiCameraFrame(){
 }
 function downsampleGemini(buffer,inputRate,outputRate){if(inputRate===outputRate)return floatToPCM(buffer);const ratio=inputRate/outputRate,newLength=Math.round(buffer.length/ratio),result=new Int16Array(newLength);let offset=0;for(let i=0;i<newLength;i++){const next=Math.round((i+1)*ratio);let sum=0,count=0;for(let j=offset;j<next&&j<buffer.length;j++){sum+=buffer[j];count++;}result[i]=Math.max(-1,Math.min(1,count?sum/count:0))*32767;offset=next;}return result.buffer;}
 function floatToPCM(input){const out=new Int16Array(input.length);for(let i=0;i<input.length;i++)out[i]=Math.max(-1,Math.min(1,input[i]))*32767;return out.buffer;}
-function playGeminiAudio(data){if(!audioContext)audioContext=new AudioContext();const pcm=new Int16Array(data),buffer=audioContext.createBuffer(1,pcm.length,24000),channel=buffer.getChannelData(0);for(let i=0;i<pcm.length;i++)channel[i]=pcm[i]/32768;const source=audioContext.createBufferSource();source.buffer=buffer;source.connect(audioContext.destination);const start=Math.max(audioContext.currentTime,nextAudioTime);source.start(start);nextAudioTime=start+buffer.duration;}
+function playGeminiAudio(data){
+  if(!audioContext)audioContext=new(window.AudioContext||window.webkitAudioContext)();
+  if(audioContext.state==="suspended")audioContext.resume();
+  const pcm=new Int16Array(data),buffer=audioContext.createBuffer(1,pcm.length,24000),channel=buffer.getChannelData(0);
+  for(let i=0;i<pcm.length;i++)channel[i]=pcm[i]/32768;
+  const source=audioContext.createBufferSource();
+  source.buffer=buffer;
+  source.connect(audioContext.destination);
+  const now=audioContext.currentTime;
+  const start=(nextAudioTime<=now)?(now+0.08):nextAudioTime;
+  source.start(start);
+  nextAudioTime=start+buffer.duration;
+  activeAudioSources.push(source);
+  source.onended=()=>{activeAudioSources=activeAudioSources.filter(s=>s!==source);};
+}
 geminiConnect.onclick=geminiConnectFn;geminiDisconnect.onclick=geminiDisconnectFn;geminiSend.onclick=geminiSendText;geminiVoice.onclick=()=>isRecording?stopGeminiVoice():startGeminiVoice();geminiCamera.onclick=()=>geminiCameraActive?stopGeminiCamera():startGeminiCamera();geminiInput.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();geminiSendText();}});
 </script>
 
