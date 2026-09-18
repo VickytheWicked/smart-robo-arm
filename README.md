@@ -1,395 +1,276 @@
-# 🤖 Robotic Arm — Vision-Based Control & Visual Servoing
+# 🤖 6-DOF Smart Robotic Arm — Autonomous Vision & Voice Control
 
-A **6-DOF robotic arm project** combining embedded control, computer vision, and a web-based robotics dashboard. The system uses a **Raspberry Pi as the main host**, an **XIAO ESP32-C3 for servo control**, a **PCA9685 servo driver**, and a **Logitech webcam** for visual feedback.
+A multi-tiered, vision-guided 6-DOF robotic arm manipulation system combining **embedded microcontroller control**, **dual-path computer vision (Local HSV + Gemini Robotics VLM)**, **real-time visual servoing (OpenCV CSRT)**, **multimodal voice interaction ("Lucy" powered by Gemini Live)**, and a **responsive web dashboard**.
 
-The long-term goal is to develop a robotic arm capable of **detecting, tracking, approaching, and grasping objects autonomously using vision-based control**.
-
-> 🚧 **Project Status: Under Development**
->
-> The current visual servoing system is primarily **rule-based**. It is being developed toward more robust vision-based control methods such as **Image-Based Visual Servoing (IBVS)**.
+The system enables autonomous detection, continuous visual tracking, alignment, and grasping of objects, as well as manual joint/directional manipulation and voice-commanded task execution.
 
 ---
 
-## 📸 Dashboard
+## 📸 System Overview & Dashboard
 
-The Raspberry Pi hosts a web server that provides a browser-based control and monitoring interface.
+The web dashboard acts as a mission control center hosted directly by the robot control server (`server_v9.py`):
 
-![Robotic Arm Dashboard](/images/dashboard.png)
+* 🎛️ **Manual Joint Sliders**: Direct angle control for all 6 servos with software limits.
+* 🦾 **Real-Time 2D Arm Kinematics Visualizer**: Interactive dynamic SVG preview reflecting joint poses.
+* 📷 **Low-Latency Camera HUD**: Live MJPEG video feed overlaid with crosshairs, bounding boxes, centroid tracking, and pixel errors.
+* 🎯 **Dual-Path Object Picking**:
+  * **Color Detection (HSV)**: Ultra-fast (~30 FPS) local tracking for colored items (red, green, yellow, blue, white).
+  * **Universal Object Picking**: Zero-shot open-vocabulary localization via `gemini-robotics-er-2-preview` with anti-drift CSRT tracking.
+* 🎙️ **"Lucy" Gemini Live Voice Interface**: Direct conversational interaction with natural language robot control tool execution.
+* 🕹️ **Directional Manual D-Pad**: Stepwise navigation (`LEFT`, `RIGHT`, `FORWARD`, `BACK`, `CENTERED`).
+* 📜 **Live Telemetry & Logs**: Real-time Socket.IO status stream, servo angles, and ESP32 serial logs.
 
-The dashboard provides:
-
-* 🎛️ Manual joint control
-* 🦾 Real-time arm visualization
-* 📷 Live camera feed
-* 🎯 Visual servoing
-* 📏 Sensor information
-* 🧠 Autonomous agent interface
-* 📜 System and exploration logs
-* ⚙️ Scripted arm movements
-* 🔌 ESP32 communication status
 ---
 
 ## 🏗️ System Architecture
 
 ```text
-                    ┌──────────────────────┐
-                    │      Logitech        │
-                    │       Webcam         │
-                    └──────────┬───────────┘
-                               │
-                               │ Video
-                               ▼
-                    ┌──────────────────────┐
-                    │    Raspberry Pi      │
-                    │                      │
-                    │  Web Server           │
-                    │  Computer Vision      │
-                    │  Visual Servoing      │
-                    │  Dashboard            │
-                    └──────────┬───────────┘
-                               │
-                         Commands / Control
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │    XIAO ESP32-C3     │
-                    │                      │
-                    │  Servo Controller    │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │      PCA9685         │
-                    │   PWM Servo Driver   │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │     6-DOF Robotic    │
-                    │         Arm          │
-                    └──────────────────────┘
+                                  ┌────────────────────────────────┐
+                                  │   User / Operator Interface    │
+                                  ├────────────────────────────────┤
+                                  │  Web Dashboard (v3) / Voice    │
+                                  └──────────────┬─────────────────┘
+                                                 │
+                   ┌─────────────────────────────┴─────────────────────────────┐
+                   │ HTTP / Socket.IO (Port 3000)                              │ WebSocket (Port 8000)
+                   ▼                                                           ▼
+    ┌──────────────────────────────────────────────┐            ┌──────────────────────────────────────────────┐
+    │          Robot Server (server_v9.py)         │            │      Gemini Live Server (gemini_server_v2)   │
+    ├──────────────────────────────────────────────┤            ├──────────────────────────────────────────────┤
+    │ • Flask + Socket.IO Control Engine           │◄──HTTP────┤ • FastAPI + WebSockets Gateway               │
+    │ • Visual Servoing Closed-Loop Controller     │  (Arm V2)  │ • "Lucy" Multimodal Voice Agent              │
+    │ • Video Stream (MJPEG + HUD Annotations)     │            │ • Gemini Live API (gemini-3.1-flash-live)    │
+    │ • Serial Protocol Bridge (115200 baud)       │            │ • Function Calling Tool Mapping (tools_v2)   │
+    └──────────────┬───────────────────────────────┘            └──────────────────────────────────────────────┘
+                   │
+         ┌─────────┴────────────────────────────────┐
+         │ Perception & Tracking Subsystems         │
+         ├──────────────────────────────────────────┤
+         │ [Path A] Fast Local HSV (vision_detection) │
+         │   • Red, Green, Yellow, Blue, White      │
+         │   • Morphological Filtering & Centroid   │
+         │                                          │
+         │ [Path B] Universal Target (crst.py logic)│
+         │   • Gemini Robotics ER-2 VLM             │
+         │   • OpenCV CSRT Tracker @ 30 FPS         │
+         │   • Anti-Drift Heuristics & Re-query     │
+         └─────────────────┬────────────────────────┘
+                           │
+                 Commands: S<idx>:<deg> / Directional
+                           │
+                           ▼
+    ┌──────────────────────────────────────────────┐
+    │     Embedded Controller (CameraEquipedRobo)  │
+    ├──────────────────────────────────────────────┤
+    │ • Seeed Studio XIAO ESP32-C3 Firmware        │
+    │ • PCA9685 16-Channel PWM Servo Driver        │
+    │ • Table Collision Boundary Protection        │
+    │ • Trajectory Sequences & Safety Limits       │
+    └──────────────────────┬───────────────────────┘
+                           │ PWM Pulses
+                           ▼
+    ┌──────────────────────────────────────────────┐
+    │             6-DOF Physical Arm               │
+    ├──────────────────────────────────────────────┤
+    │  J0: Base (Yaw)        J3: Wrist (Pitch)     │
+    │  J1: Shoulder (Pitch)  J4: Wrist Roll (Roll) │
+    │  J2: Elbow (Pitch)     J5: Gripper           │
+    └──────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🔧 Hardware
+## 📂 Core Codebase Structure
 
-| Component            | Role                                                                |
-| -------------------- | ------------------------------------------------------------------- |
-| 🖥️ Raspberry Pi     | Main computer, web server, vision processing and high-level control |
-| 🔌 XIAO ESP32-C3     | Low-level servo controller                                          |
-| 🎛️ PCA9685          | Multi-channel PWM servo control                                     |
-| 🦾 6-DOF Robotic Arm | Physical manipulation platform                                      |
-| 📷 Logitech Webcam   | Object detection and visual feedback                                |
-
----
-
-## 🌐 Web-Based Control System
-
-The Raspberry Pi hosts a web server that provides a centralized browser-based interface for controlling and monitoring the robotic arm.
-
-### Manual Control
-
-The dashboard provides individual controls for:
-
-```text
-J0 BASE
-J1 SHOULDER
-J2 ELBOW
-J3 WRIST
-J4 WRIST ROLL
-J5 GRIPPER
-```
-
-Users can adjust joint positions and send the resulting commands to the ESP32.
-
-### Control Modes
-
-**Manual**
-
-```text
-User → Dashboard → Raspberry Pi → ESP32 → PCA9685 → Servos
-```
-
-**Scripted**
-
-Predefined sequences can be executed for actions such as:
-
-* Home
-* Move
-* Lift
-* Place
-* Pick
-* Gripper control
-
-**Visual Servoing**
-
-The vision system determines movement corrections based on the camera feed.
+| File / Directory | Description |
+| :--- | :--- |
+| **`server_v9.py`** | **Primary Robot Control Server** (Flask + Socket.IO). Orchestrates camera streaming, visual servoing loop, serial communication with ESP32, REST endpoints, and hosts `dashboard_mobile_v3.html`. |
+| **`crst.py`** | **Standalone Universal Visual Servoing Engine**. Demonstrates zero-shot object detection using `gemini-robotics-er-2-preview` paired with high-rate OpenCV CSRT tracking, anti-drift heuristics, and proportional visual servoing. |
+| **`vision_detection.py`** | **High-Speed HSV Color Detection Module**. Real-time contour analysis and centroid localization for red, green, yellow, blue, and white objects. Includes interactive calibration trackbar tuner (`--tune`). |
+| **`gemini_server_v2.py`** | **Gemini Live Gateway** (FastAPI). Bridges bidirectional browser audio/video streams over WebSocket to Gemini Live (`gemini-3.1-flash-live-preview`), handling speech-to-speech and tool calls. |
+| **`gemini_live_v2.py`** | **"Lucy" AI Brain Core**. Implements the conversational agent, system prompt, long-term memory handling, and robot tool invocation. |
+| **`robot/arm_v2.py`** | **Robot Arm Python Client Library**. Encapsulates REST API commands (`pick_color_object`, `pick_object`, `move_arm`, `move_joint`, `reset_arm`, `gripper`) for programmatic control. |
+| **`robot/tools_v2.py`** | **Gemini Function Calling Definitions**. Tool schemas passed to Gemini Live so Lucy can interpret user intent and invoke arm actions. |
+| **`dashboard_mobile_v3.html`** | **Comprehensive Mobile/Desktop Web Dashboard**. Features real-time arm SVG visualizer, camera HUD, manual sliders, D-pad, Gemini Live voice chat controls, and system telemetry. |
+| **`CameraEquipedRobo/`** | **PlatformIO C++ Project for XIAO ESP32-C3**. Contains `src/main.cpp` for PCA9685 PWM driving, table safety checks (`TABLE_POINTS`), motion smoothing, and serial command decoding. |
+| **`capture.py`** | **Dataset Collection Tool**. Spacebar-triggered camera frame capture utility for training custom object detection models. |
+| **`twilio_handler.py`** | **Twilio Media Stream Adapter**. Provides phone-call audio bridge to Gemini Live with 24kHz/16kHz to 8kHz $\mu$-law transcoding. |
+| **`old_version/`** | **Historical Development Versions**. Archived previous iterations (`server_v5.py` - `server_v8.py`, homography calibration, depth grasping). |
 
 ---
 
-# 📷 Camera & Computer Vision
+## 🎯 Dual-Mode Perception & Visual Servoing
 
-A Logitech webcam provides the visual input for the vision subsystem.
+### 1. High-Speed Local Color Detection (`vision_detection.py`)
+* **Execution Rate**: Native ~30 FPS camera framerate (command interval: `0.2s`).
+* **Supported Targets**: `red`, `green`, `yellow`, `blue`, `white` (e.g. Lego bricks, erasers, markers).
+* **Technique**: Dual-range HSV filtering (handling hue wrap-around for reds), Gaussian smoothing, morphological opening/dilation, and contour moments for centroid $(c_x, c_y)$ computation.
+* **Auto-Routing**: If the user or voice agent requests a colored object (e.g. *"Pick up the red lego brick"*), the system automatically routes detection locally, bypassing VLM latency.
 
-The Raspberry Pi receives the camera stream and processes the visual information to determine where the target object is located.
+### 2. Universal Target Localization (`gemini-robotics-er-2-preview` + CSRT)
+* **Execution Rate**: VLM query every `~1.3s - 1.5s`; local CSRT tracking at 30 FPS.
+* **Workflow**:
+  1. Operator specifies any arbitrary target (e.g., *"white correction tape"*, *"pair of scissors"*).
+  2. The frame is dispatched to `gemini-robotics-er-2-preview` to obtain normalized $[y_{min}, x_{min}, y_{max}, x_{max}]$ bounding coordinates.
+  3. The bounding box initializes an **OpenCV CSRT tracker**.
+  4. **Anti-Drift Validation (`validate_tracker_update`)**: Protects against tracking drift across frames:
+     * **Centroid Jump**: Rejects displacements $> 45\text{ px}$.
+     * **Area Ratio**: Rejects sudden expansions/contractions $> 2.5\times$.
+     * **Aspect Ratio**: Rejects distortion changes $> 1.35\times$.
+     * Reverts to VLM re-acquisition if 3 consecutive frames fail.
 
-```text
-Camera
-   │
-   ▼
-Image Processing
-   │
-   ▼
-Object Detection / Tracking
-   │
-   ▼
-Target Position
-   │
-   ▼
-Visual Servo Controller
-   │
-   ▼
-Robot Motion
-```
-
----
-
-# 🎯 Visual Servoing
-
-One of the main objectives of this project is **vision-based autonomous manipulation**.
-
-The current system attempts to:
-
-1. Detect an object using the camera
-2. Determine its position in the image
-3. Calculate an appropriate movement
-4. Move the robotic arm
-5. Continuously observe the camera
-6. Correct the arm's position
-7. Approach the object
-8. Attempt to grasp it
-
-### Current Approach
-
-The current implementation uses a **rule-based controller**.
-
-For example:
-
-```text
-IF object is left of image center
-    → move arm left
-
-IF object is right of image center
-    → move arm right
-
-IF object is above target region
-    → adjust arm upward
-
-IF object is below target region
-    → adjust arm downward
-
-IF object is sufficiently aligned
-    → attempt grasp
-```
-
-This approach is useful for prototyping the complete **perception → control → actuation** pipeline, but it has limitations in precision, generalization, and stability.
+### 3. Closed-Loop Proportional Visual Servoing
+* **Error Formulation**:
+  $$\text{err}_x = c_x - \text{center}_x, \quad \text{err}_y = c_y - \text{center}_y$$
+* **Control Deadzones**: $60\text{ px} \times 60\text{ px}$ deadzone around frame center.
+* **Action Policy**:
+  * If $|\text{err}_x| > \text{DEAD\_ZONE}_x$: Arm generates `LEFT:<speed>` or `RIGHT:<speed>`.
+  * If $|\text{err}_y| > \text{DEAD\_ZONE}_y$: Arm generates `FORWARD:<speed>` or `BACK:<speed>`.
+  * When aligned within deadzone: Sends `CENTERED:<speed>` $\to$ arm moves downward toward target until reaching table grasp threshold $\to$ triggers `GRAB` routine.
 
 ---
 
-# 🧠 Future: Image-Based Visual Servoing (IBVS)
+## 🦾 Hardware & Servo Configuration
 
-The next major development direction is implementing a more principled **Image-Based Visual Servoing (IBVS)** system.
+The physical arm uses 6 high-torque servos wired to a **PCA9685 16-channel 12-bit I2C PWM driver** controlled by a **Seeed XIAO ESP32-C3**:
 
-Instead of relying primarily on predefined rules, IBVS can use the relationship between image features and robot motion.
+| Joint | Servo Index | Name | Motion Type | PWM Pulse Min | PWM Pulse Max | Home Angle |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **J0** | Channel 0 | Base | Yaw (Left/Right) | 85 | 540 | $30^\circ$ |
+| **J1** | Channel 1 | Shoulder | Pitch (Up/Down) | 90 | 520 | $180^\circ$ |
+| **J2** | Channel 2 | Elbow | Pitch (Extension) | 190 | 520 | $0^\circ$ |
+| **J3** | Channel 3 | Wrist | Pitch | 100 | 400 | $40^\circ$ |
+| **J4** | Channel 4 | Wrist Roll | Roll (Orientation) | 100 | 550 | $90^\circ$ |
+| **J5** | Channel 5 | Gripper | Open / Close | 80 | 400 | $0^\circ$ (Open) |
 
-```text
-Image Features
-      ↓
-Image Error
-      ↓
-Interaction / Image Jacobian
-      ↓
-Camera / End-Effector Velocity
-      ↓
-Robot Motion
-```
-
-The objective is to minimize the visual error between the **current image feature** and the **desired image feature**.
-
-```text
-        Desired Feature
-              ●
-              │
-              │  Image Error
-              │
-              ▼
-        Current Feature
-              ●
-              │
-              ▼
-      Visual Servo Controller
-              │
-              ▼
-         Robot Motion
-              │
-              ▼
-          New Image
-              │
-              └───────────────┐
-                              │
-                              ▼
-                     Repeat / Converge
-```
-
-IBVS is **not currently the primary controller**. It is a planned direction for improving the visual servoing subsystem.
+### Table Collision Protection
+The ESP32 firmware features hard-coded boundary protection (`TABLE_POINTS`) mapping elbow vs shoulder limits to prevent the end-effector from colliding with or pressing into the workspace surface during downward visual servoing.
 
 ---
 
-# 🔄 Overall Control Loop
+## 🚀 Getting Started
 
-The intended autonomous control architecture is:
+### 1. Hardware Setup & Connections
+1. Connect the 6-DOF robotic arm servos to PCA9685 channels 0 through 5.
+2. Connect PCA9685 I2C lines (`SDA`, `SCL`) and power to the XIAO ESP32-C3.
+3. Plug the ESP32 into your host computer/Raspberry Pi via USB (e.g. `/dev/ttyACM0`).
+4. Mount the camera (e.g. Logitech webcam) onto the arm or workspace with an overhead/end-effector perspective.
 
-```text
-             ┌───────────────┐
-             │    Camera     │
-             └───────┬───────┘
-                     │
-                     ▼
-             ┌───────────────┐
-             │ Object /      │
-             │ Feature       │
-             │ Detection     │
-             └───────┬───────┘
-                     │
-                     ▼
-             ┌───────────────┐
-             │ Visual Error  │
-             │ Calculation   │
-             └───────┬───────┘
-                     │
-                     ▼
-             ┌───────────────┐
-             │ Visual Servo  │
-             │ Controller    │
-             └───────┬───────┘
-                     │
-                     ▼
-             ┌───────────────┐
-             │ Robot Command │
-             └───────┬───────┘
-                     │
-                     ▼
-             ┌───────────────┐
-             │    ESP32-C3   │
-             └───────┬───────┘
-                     │
-                     ▼
-             ┌───────────────┐
-             │   PCA9685     │
-             └───────┬───────┘
-                     │
-                     ▼
-             ┌───────────────┐
-             │  Robotic Arm  │
-             └───────┬───────┘
-                     │
-                     ▼
-                   Camera
-                     │
-                     └──────────────► Feedback
+### 2. Flash ESP32 Firmware
+```bash
+cd CameraEquipedRobo
+# Build and upload firmware using PlatformIO
+pio run --target upload
+```
+
+### 3. Environment Setup
+Install required Python dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+Create or configure `.env` file in the project root:
+```env
+GEMINI_API_KEY="your_google_gemini_api_key"
+SERIAL_PORT="/dev/ttyACM0"
+BAUD_RATE=115200
+HOST="0.0.0.0"
+PORT=3000
+CAMERA_INDEX=1
+COMMAND_INTERVAL=0.6
+COLOR_COMMAND_INTERVAL=0.2
+ROBOT_SERVER_URL="http://127.0.0.1:3000"
 ```
 
 ---
 
-# 🛠️ Technology Stack
+## 🏃 Running the Application
 
-### Hardware
+### Option A: Complete Web & Voice Experience (Recommended)
 
-* Raspberry Pi
-* XIAO ESP32-C3
-* PCA9685 16-channel PWM driver
-* 6-DOF robotic arm
-* Servo motors
-* Logitech webcam
+1. **Start the Main Robot Server (`server_v9.py`)**:
+   ```bash
+   python server_v9.py
+   ```
+   * Starts the Flask + Socket.IO server on `http://localhost:3000`.
+   * Connects to the ESP32 on `/dev/ttyACM0` (or runs simulated in `DRY_RUN` mode).
+   * Serves `dashboard_mobile_v3.html` and the `/video_feed` MJPEG stream.
 
-### Software
+2. **Start the Gemini Live Voice Agent (`gemini_server_v2.py`)**:
+   ```bash
+   python gemini_server_v2.py
+   ```
+   * Launches FastAPI on `http://localhost:8000`.
+   * Accepts WebSocket connections on `ws://localhost:8000/ws` for real-time audio/vision conversation with "Lucy".
 
-* Python
-* OpenCV
-* Web server
-* HTML / CSS / JavaScript
-* ESP32 firmware
-* Serial / network-based communication
-* Computer vision
-* Visual servoing
-
----
-
-# 🚧 Current Development Status
-
-| Feature                      | Status        |
-| ---------------------------- | ------------- |
-| ESP32 servo control          | ✅ Working     |
-| PCA9685 servo control        | ✅ Working     |
-| 6-DOF arm control            | ✅ Working     |
-| Raspberry Pi control server  | ✅ Working     |
-| Web dashboard                | ✅ Working     |
-| Manual joint control         | ✅ Working     |
-| Camera integration           | ✅ Working     |
-| Camera feed on dashboard     | ✅ Working     |
-| Scripted movements           | 🔄 Developing |
-| Object tracking              | 🔄 Developing |
-| Rule-based visual servoing   | 🔄 Developing |
-| Autonomous grasping          | 🔄 Developing |
-| IBVS controller              | 🧪 Planned    |
-| Robust object detection      | 🧪 Planned    |
-| Full autonomous manipulation | 🧪 Planned    |
+3. **Open the Dashboard**:
+   * Navigate to `http://localhost:3000` in your web browser.
+   * Click **CONNECT** under the Lucy Voice Assistant panel to enable bidirectional voice communication.
 
 ---
 
-# 🎯 Project Goal
+### Option B: Standalone Universal Visual Servoing (`crst.py`)
 
-The ultimate goal is to evolve the system from a remotely controlled robotic arm into a **closed-loop vision-based manipulation platform**.
+To run dedicated visual servoing without launching the full voice server:
+```bash
+python crst.py
+```
+* Queries `gemini-robotics-er-2-preview` for the target object configured in `TARGET`.
+* Tracks continuously with OpenCV CSRT at 30 FPS and sends real-time servo commands directly over serial.
 
-```text
-Manual Control
-      ↓
-Scripted Control
-      ↓
-Rule-Based Vision
-      ↓
-Closed-Loop Visual Servoing
-      ↓
-IBVS
-      ↓
-Autonomous Pick & Place
+---
+
+### Option C: HSV Color Detector & Tuner (`vision_detection.py`)
+
+To test or recalibrate HSV color thresholds under your current ambient lighting:
+```bash
+# Interactive trackbar calibration tool:
+python vision_detection.py --tune
+
+# Run single-camera color test:
+python vision_detection.py
 ```
 
-The project is being developed incrementally, starting with reliable hardware control and gradually introducing more advanced robotics and computer vision algorithms.
+---
+
+## 📡 REST API & Socket.IO Reference
+
+### REST Endpoints (`server_v9.py`)
+
+| Method | Route | Description | Payload Example |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/` | Web control dashboard (`dashboard_mobile_v3.html`) | — |
+| `GET` | `/video_feed` | Live MJPEG video stream with tracking HUD overlays | — |
+| `GET` | `/api/status` | Current servo angles, tracking state, and connection status | — |
+| `POST` | `/api/pick` | Activate visual servoing for a target or color | `{"target": "red block", "color": "red"}` |
+| `POST` | `/api/stop-tracking` | Immediately stops visual servoing and tracking | `{}` |
+| `POST` | `/api/command` | Send directional command to ESP32 | `{"command": "LEFT", "speed": 8}` |
+| `POST` | `/api/servo` | Set specific joint angle | `{"servo": 0, "angle": 45}` |
+| `POST` | `/api/gripper/<action>` | Open or close gripper end-effector | `<action>`: `open` or `close` |
+| `POST` | `/api/reset` | Move arm to default home calibration pose | `{}` |
+| `POST` | `/api/mode` | Switch control mode (`manual`, `visual`, `scripted`) | `{"mode": "visual"}` |
+
+### Socket.IO Telemetry Events
+* **`state_update`**: Real-time broadcast of servo positions, tracking status, and coordinate errors.
+* **`log_entry`**: Streaming log messages from the visual servo controller and ESP32 serial replies.
+* **`mode_change`** & **`target_change`**: Status synchronization across all connected browser clients.
 
 ---
 
-# 📌 Project Status
+## 🎙️ Voice Commands ("Lucy") Examples
 
-**Active Development 🚧**
+When connected via the dashboard or WebSocket, you can speak directly to Lucy:
 
-This project explores the intersection of:
-
-* Robotics
-* Computer Vision
-* Embedded Systems
-* Web-Based Robot Control
-* Autonomous Manipulation
-* Visual Servoing
-* Image-Based Visual Servoing (IBVS)
-
-The visual servoing subsystem is still experimental, and the current implementation should be considered a **prototype rather than a production-grade autonomous manipulation system**.
+* 🗣️ *"Lucy, pick up the red lego brick."* $\to$ Automatically invokes `pick_color_object(color="red", item="lego brick")`.
+* 🗣️ *"Grab the yellow block on the table."* $\to$ Automatically invokes `pick_color_object(color="yellow", item="block")`.
+* 🗣️ *"Can you locate and grab the black scissors?"* $\to$ Invokes `pick_object(target="black scissors")` using Gemini Robotics ER-2.
+* 🗣️ *"Stop tracking immediately."* $\to$ Executes emergency safety stop `stop_tracking()`.
+* 🗣️ *"Open the gripper and reset the arm."* $\to$ Executes `open_gripper()` then `reset_arm()`.
 
 ---
 
-## ⭐ Future Vision
+## 🛡️ Safety & Operational Guidelines
 
-> **See → Understand → Move → Correct → Grasp**
-
-The long-term objective is to build a robotic system that can use visual feedback to continuously correct its own movements rather than simply executing predefined joint commands.
+1. **Dry Run Mode**: Set `DRY_RUN=True` in `.env` to test camera tracking, Gemini localization, and visual servo math without sending physical motion commands to the servos.
+2. **Emergency Stop**: The **Reset** button on the dashboard or the *"Stop tracking"* voice command immediately disengages the visual servoing loop and halts arm motion.
+3. **Power Supply**: Ensure the PCA9685 servo driver is powered by an independent external 5V/6V high-current power supply (minimum 4A–6A recommended for 6 servos under load) rather than drawing power directly from the microcontroller or Raspberry Pi USB rails.
